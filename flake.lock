@@ -1,0 +1,96 @@
+{
+  "nodes": {
+    "classic-db": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1790102758,
+        "narHash": "sha256-E4Y9sYc5q2GGUnRUTyLde5/fLDJzyZyXaC/0Xf9tuCs=",
+        "owner": "cmangos",
+        "repo": "classic-db",
+        "rev": "ec4f596146be6467ea93c57397858e329e2db852",
+        "type": "github"
+      },
+      "original": {
+        "owner": "cmangos",
+        "repo": "classic-db",
+        "type": "github"
+      }
+    },
+    "cmangos-playerbots": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1790249527,
+        "narHash": "sha256-FIzdn/SuuybzfEAyO7VZJCztYT+3tex1bRj5lQtvBbY=",
+        "owner": "cmangos",
+        "repo": "playerbots",
+        "rev": "27bf3f2df9aeba5eb9f174aded4a994559f4737b",
+        "type": "github"
+      },
+      "original": {
+        "owner": "cmangos",
+        "repo": "playerbots",
+        "type": "github"
+      }
+    },
+    "cmangos-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1788163243,
+        "narHash": "sha256-NBH5c1T3lpNQ0KHhdn6kdbwNOL3xZ/cpRg5BQ7ljiSQ=",
+        "owner": "cmangos",
+        "repo": "mangos-classic",
+        "rev": "8ec338a1704e7dcb1c0213eb7ed58f9231ade40f",
+        "type": "github"
+      },
+      "original": {
+        "owner": "cmangos",
+        "repo": "mangos-classic",
+        "type": "github"
+      }
+    },
+    "cmangos-zlib": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1705948357,
+        "narHash": "sha256-TkPLWSN5QcPlL9D0kc/yhH0/puE9bFND24aj5NVDKYs=",
+        "owner": "madler",
+        "repo": "zlib",
+        "rev": "51b7f2abdade71cd9bb0e7a373ef2610ec6f9daf",
+        "type": "github"
+      },
+      "original": {
+        "owner": "madler",
+        "ref": "v1.3.1",
+        "repo": "zlib",
+        "type": "github"
+      }
+    },
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1790185690,
+        "narHash": "sha256-xJ+X4hBtOcAFGBOe5nAMyMUeF9foJBmIOu3NjBqBycU=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "4975466d324710c576dc11ad614684e6bd8cad8e",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixos-unstable",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "root": {
+      "inputs": {
+        "classic-db": "classic-db",
+        "cmangos-playerbots": "cmangos-playerbots",
+        "cmangos-src": "cmangos-src",
+        "cmangos-zlib": "cmangos-zlib",
+        "nixpkgs": "nixpkgs"
+      }
+    }
+  },
+  "root": "root",
+  "version": 7
+}
