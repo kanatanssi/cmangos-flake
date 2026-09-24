@@ -13,15 +13,9 @@
       url = "github:cmangos/classic-db/master";
       flake = false;
     };
-
-    # submodules downloaded by cmangos
-    cmangos-zlib = {
-      url = "github:madler/zlib/master";
-      flake = false;
-    };
   };
 
-  outputs = { self, nixpkgs, cmangos-src, cmangos-zlib }:
+  outputs = { self, nixpkgs, cmangos-src }:
     let
       system = "x86_64-linux";
       pkgs = import nixpkgs { inherit system; };
@@ -32,13 +26,6 @@
           version = "date=${cmangos-src.lastModifiedDate or "unknown"}-${cmangos-src.shortRev or "dirty"}";
 
           src = cmangos-src;
-
-          # Insert submodules downloaded above
-          postUnpack = ''
-            rm -rf $sourceRoot/src/dep/zlib
-            cp -r ${cmangos-zlib} $sourceRoot/src/dep/zlib
-            chmod -R +w $sourceRoot/src/dep/zlib
-          '';
 
           nativeBuildInputs = with pkgs; [ cmake gcc pkg-config git ];
           buildInputs = with pkgs; [ mariadb-connector-c ];
