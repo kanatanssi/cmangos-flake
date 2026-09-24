@@ -21,7 +21,7 @@
     };
   };
 
-  outputs = { self, nixpkgs, cmangos-src, cmangos-zlib, cmangos-g3dlite }:
+  outputs = { self, nixpkgs, cmangos-src, cmangos-zlib }:
     let
       system = "x86_64-linux";
       pkgs = import nixpkgs { inherit system; };
