@@ -19,11 +19,6 @@
       url = "github:madler/zlib/master";
       flake = false;
     };
-
-    cmangos-g3dlite = {
-      url = "github:cmangos/g3dlite/master";
-      flake = false;
-    };
   };
 
   outputs = { self, nixpkgs, cmangos-src, cmangos-zlib, cmangos-g3dlite }:
@@ -43,10 +38,6 @@
             rm -rf $sourceRoot/src/dep/zlib
             cp -r ${cmangos-zlib} $sourceRoot/src/dep/zlib
             chmod -R +w $sourceRoot/src/dep/zlib
-
-            rm -rf $sourceRoot/src/dep/g3dlite
-            cp -r ${cmangos-g3dlite} $sourceRoot/src/dep/g3dlite
-            chmod -R +w $sourceRoot/src/dep/g3dlite
           '';
 
           nativeBuildInputs = with pkgs; [ cmake gcc pkg-config git ];
