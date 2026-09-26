@@ -1,1 +1,4 @@
+# Build results
 result
+# Test vm
+nixos.*

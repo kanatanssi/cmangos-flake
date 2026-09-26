@@ -19,9 +19,8 @@
       flake = false;
     };
 
-    # submodule cmake tries to pull
     cmangos-zlib = {
-      url = "github:madler/zlib/v1.3.1"; # Tarkista versio CMaNGOSin koodeista jos tarpeen
+      url = "github:madler/zlib/v1.3.1";
       flake = false;
     };
   };
@@ -38,18 +37,11 @@
 
         src = cmangos-src;
 
-
         nativeBuildInputs = with pkgs; [ cmake gcc pkg-config ];
         buildInputs = with pkgs; [ boost mariadb-connector-c ];
 
         hardeningDisable = [ "format" ];
 
-        # CMaNGOS defaults to searching for static Boost libraries
-        # NixOS provides shared/dynamic libraries by default in 'pkgs.boost'.
-        # We patch CMakeLists.txt to force dynamic linking, preventing build failures due to missing static assets.
-
-        # Manually move out-of-tree modules (like PlayerBots) into the sandbox's source tree before configuration.
-        # This tricks CMake into thinking the repository was natively populated via a download phase.
         preConfigure = ''
           substituteInPlace CMakeLists.txt \
             --replace "set(Boost_USE_STATIC_LIBS ON)" "set(Boost_USE_STATIC_LIBS OFF)"
@@ -59,8 +51,6 @@
           chmod -R +w src/modules/PlayerBots
         '';
 
-        # Bypass CMaNGOS's internal FetchContent routine for zlib.
-        # Forcing 'if(FALSE)' routes CMake straight to the else() block where it uses our predefined Nix zlib flags.
         postPatch = ''
           sed -i 's/if (NOT ZLIB_FOUND.*/if (FALSE)/' dep/src/CMakeLists.txt
         '';
@@ -71,20 +61,137 @@
           "-DBUILD_AHBOT=ON"
           "-DBUILD_EXTRACTORS=ON"
           "-DCMAKE_INSTALL_PREFIX=${placeholder "out"}"
-
-          # Explicitly point to Nix-provided MariaDB connector paths to prevent CMake from searching host directories.
           "-DMYSQL_INCLUDE_DIR=${pkgs.lib.getDev pkgs.mariadb-connector-c}/include/mariadb"
           "-DMYSQL_LIBRARY=${pkgs.lib.getLib pkgs.mariadb-connector-c}/lib/mariadb/libmariadb.so"
-
-          # Enforce offline build by blocking CMake from making automatic git/network clones.
           "-DFETCHCONTENT_FULLY_DISCONNECTED=ON"
-
-          # Provide the exact header and library paths for the Nix-packaged zlib dependency.
           "-DZLIB_INCLUDE_DIRS=${pkgs.zlib.dev}/include"
           "-DZLIB_LIBRARIES=${pkgs.zlib}/lib/libz.so"
         ];
       };
     };
-  };
 
+    nixosModules.default = { config, pkgs, lib, ... }:
+    let
+      cfg = config.services.cmangos-server;
+    in {
+      options.services.cmangos-server = {
+        enable = lib.mkEnableOption "CMaNGOS Classic Server";
+
+        dbUser = lib.mkOption {
+          type = lib.types.str;
+          default = "mangos";
+        };
+
+        dbPassword = lib.mkOption {
+          type = lib.types.str;
+          default = "mangos";
+        };
+      };
+
+      config = lib.mkIf cfg.enable {
+        services.mysql = {
+          enable = true;
+          package = pkgs.mariadb;
+          ensureDatabases = [ "classicmangos" "classiccharacters" "classicrealmd" ];
+          ensureUsers = [
+            {
+              name = cfg.dbUser;
+              ensurePermissions = {
+                "classicmangos.*" = "ALL PRIVILEGES";
+                "classiccharacters.*" = "ALL PRIVILEGES";
+                "classicrealmd.*" = "ALL PRIVILEGES";
+              };
+            }
+          ];
+        };
+
+        systemd.services.cmangos-db-init = {
+          description = "Initialize CMaNGOS Classic from classic-db repo";
+          after = [ "mysql.service" ];
+          wantedBy = [ "multi-user.target" ];
+          serviceConfig.Type = "oneshot";
+          serviceConfig.RemainAfterExit = true;
+
+          path = with pkgs; [ mariadb gzip coreutils gnugrep procps gnused bash ];
+
+          script = ''
+            until mariadb-admin ping -u root --silent; do
+              sleep 1
+            done
+
+            echo "Configuring traditional password authentication for ${cfg.dbUser}..."
+            mariadb -u root -e "ALTER USER '${cfg.dbUser}'@'localhost' IDENTIFIED VIA mysql_native_password USING PASSWORD('${cfg.dbPassword}'); FLUSH PRIVILEGES;"
+
+
+            if [ $(mysql -u root -Nse "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='classicrealmd'") -eq 0 ]; then
+              echo "CMaNGOS dbs empty. Initializing base structures..."
+
+              echo "Applying core base structures..."
+              mariadb -u root classicrealmd < ${cmangos-src}/sql/base/realmd.sql
+              mariadb -u root classiccharacters < ${cmangos-src}/sql/base/characters.sql
+              mariadb -u root classicmangos < ${cmangos-src}/sql/base/mangos.sql
+              mariadb -u root classicmangos < ${cmangos-src}/sql/base/logs.sql
+
+              echo "Preparing scratch workspace for InstallFullDB.sh in /tmp..."
+              WORK_DIR=$(mktemp -d)
+              cp -r ${classic-db}/* $WORK_DIR/
+              chmod -R +w $WORK_DIR
+              cd $WORK_DIR
+
+              echo "Fixing line endings and shebang for NixOS..."
+              sed -i 's/\r$//' ./InstallFullDB.sh
+              sed -i 's|#!/bin/bash|#!/usr/bin/env bash|' ./InstallFullDB.sh
+
+
+              echo "Generating non-interactive InstallFullDB.config and injecting nixos module options..."
+              cat << EOF > InstallFullDB.config
+MYSQL_HOST="localhost"
+MYSQL_PORT="3306"
+MYSQL_USERNAME="${cfg.dbUser}"
+MYSQL_PASSWORD="${cfg.dbPassword}"
+MYSQL_USERIP="localhost"
+WORLD_DB_NAME="classicmangos"
+REALM_DB_NAME="classicrealmd"
+CHAR_DB_NAME="classiccharacters"
+LOCALES="YES"
+DEV_UPDATES="NO"
+PLAYERBOTS_DB="YES"
+AHBOT="YES"
+CORE_PATH="${cmangos-src}"
+FORCE_WAIT="NO"
+EOF
+
+              echo "Executing InstallFullDB.sh, pipe interactive questions..."
+              (echo "1"; echo "DeleteAll"; yes "") | bash ./InstallFullDB.sh
+
+              echo "Deleting scratch workspace..."
+              cd /
+              rm -rf $WORK_DIR
+
+              echo "CMaNGOS database initialization complete!"
+            else
+              echo "CMaNGOS databases already populated. Skipping initialization."
+            fi
+          '';
+        };
+      };
+    };
+
+    # Vm for testing
+    nixosConfigurations.testVM = nixpkgs.lib.nixosSystem {
+      inherit system;
+      modules = [
+        self.nixosModules.default
+        {
+          services.cmangos-server.enable = true;
+          users.users.root.password = "root";
+          services.getty.autologinUser = "root";
+
+          # Minimal settings to allow vm to boot
+          fileSystems."/" = { device = "/dev/disk/by-label/nixos"; };
+          boot.loader.grub.enable = false;
+        }
+      ];
+    };
+  };
 }
