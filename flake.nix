@@ -42,12 +42,12 @@
 
         hardeningDisable = [ "format" ];
 
-        # CMaNGOS defaults to searching for static Boost libraries
-        # NixOS provides shared/dynamic libraries by default in 'pkgs.boost'.
-        # We patch CMakeLists.txt to force dynamic linking, preventing build failures due to missing static assets.
+        # cmangos defaults to searching for static boost libraries
+        # nixos provides shared/dynamic libraries by default in 'pkgs.boost'.
+        # hack CMakeLists.txt to force dynamic linking, otherwise build fails due to not finding boost
 
-        # Manually move out-of-tree modules (like PlayerBots) into the sandbox's source tree before configuration.
-        # This tricks CMake into thinking the repository was natively populated via a download phase.
+        # manually move playerbots into the sandbox's source tree before configuration
+        # otherwise cmake tries to download it and fails
         preConfigure = ''
           substituteInPlace CMakeLists.txt \
             --replace "set(Boost_USE_STATIC_LIBS ON)" "set(Boost_USE_STATIC_LIBS OFF)"
@@ -57,8 +57,8 @@
           chmod -R +w src/modules/PlayerBots
         '';
 
-        # Bypass CMaNGOS's internal FetchContent routine for zlib.
-        # Forcing 'if(FALSE)' routes CMake straight to the else() block where it uses our predefined Nix zlib flags.
+        # bypass cmangos internal FetchContent for zlib
+        # forcing 'if(FALSE)' routes cmake straight to the else() block where it uses predefined nix zlib flags
         postPatch = ''
           sed -i 's/if (NOT ZLIB_FOUND.*/if (FALSE)/' dep/src/CMakeLists.txt
         '';
@@ -69,12 +69,12 @@
           "-DBUILD_AHBOT=ON"
           "-DBUILD_EXTRACTORS=ON"
           "-DCMAKE_INSTALL_PREFIX=${placeholder "out"}"
-          # Explicitly point to nixos-provided MariaDB connector paths to prevent CMake from searching host directories.
+          # point to nixos-provided mariadb connector paths, cmake won't find mariadb otherwise
           "-DMYSQL_INCLUDE_DIR=${pkgs.lib.getDev pkgs.mariadb-connector-c}/include/mariadb"
           "-DMYSQL_LIBRARY=${pkgs.lib.getLib pkgs.mariadb-connector-c}/lib/mariadb/libmariadb.so"
-          # Enforce offline build by blocking CMake from making automatic git/network clones.
+          # tell cmake not attempt to pull deps from online
           "-DFETCHCONTENT_FULLY_DISCONNECTED=ON"
-          # Provide the exact header and library paths for the nix-packaged zlib dependency.
+          # give exact header and library paths for zlibm cmake won't find zlib otherwise
           "-DZLIB_INCLUDE_DIRS=${pkgs.zlib.dev}/include"
           "-DZLIB_LIBRARIES=${pkgs.zlib}/lib/libz.so"
         ];
@@ -188,17 +188,19 @@ EOF
       };
     };
 
-    # Vm for testing
+    # vm for testing
     nixosConfigurations.testVM = nixpkgs.lib.nixosSystem {
       inherit system;
       modules = [
         self.nixosModules.default
         {
           services.cmangos-server.enable = true;
+
+          # set vm to autologin to root, this is just for when you run the test vm
           users.users.root.password = "root";
           services.getty.autologinUser = "root";
 
-          # Minimal settings to allow vm to boot
+          # minimal settings to allow vm to boot
           fileSystems."/" = { device = "/dev/disk/by-label/nixos"; };
           boot.loader.grub.enable = false;
         }
