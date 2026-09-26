@@ -202,7 +202,7 @@
             CharacterDatabaseInfo = "127.0.0.1;3306;${cfg.dbUser};${cfg.dbPassword};classiccharacters"
             LogsDatabaseInfo      = "127.0.0.1;3306;${cfg.dbUser};${cfg.dbPassword};classiclogs"
             MaxPlayerLimit = 10
-            Console.Enable = 0
+            Console.Enable = 1
             PlayerBots.Enable = 1
             AhBot.Enable = 1
           '';
@@ -279,7 +279,20 @@
               echo "CMaNGOS databases already populated. Skipping initialization."
             fi
 
+            echo "Ensuring declarative game accounts exist with proper access levels..."
+            ${lib.concatStringsSep "\n" (lib.mapAttrsToList (user: opts: ''
+              UPPER_USER=$(echo "${user}" | tr '[:lower:]' '[:upper:]')
 
+              SALT=$(echo $RANDOM | sha1sum | head -c 40 | tr '[:lower:]' '[:upper:]')
+              UPPER_PASS=$(echo "${opts.password}" | tr '[:lower:]' '[:upper:]')
+              I=$(echo "$UPPER_USER:$UPPER_PASS" | sha1sum | head -c 40 | tr '[:lower:]' '[:upper:]')
+              VERIFIER=$(echo "$SALT:$I" | sha1sum | head -c 40 | tr '[:lower:]' '[:upper:]')
+
+              echo "Processing account: $UPPER_USER with GM level ${toString opts.gmLevel}..."
+              mariadb -u root classicrealmd -e "INSERT INTO account (username, s, v, gmlevel) VALUES ('$UPPER_USER', '$SALT', '$VERIFIER', ${toString opts.gmLevel}) ON DUPLICATE KEY UPDATE gmlevel=${toString opts.gmLevel};"
+            '') cfg.gameAccounts)}
+
+            echo "All declarative game accounts processed."
           '';
         };
 
