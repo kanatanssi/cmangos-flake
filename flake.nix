@@ -124,7 +124,7 @@
           serviceConfig.Type = "oneshot";
           serviceConfig.RemainAfterExit = true;
 
-          path = with pkgs; [ mariadb gzip coreutils gnugrep procps gnused bash ncurses ];
+          path = with pkgs; [ mariadb gzip ];
 
           script = ''
             until mariadb-admin ping -u root --silent; do
@@ -144,49 +144,43 @@
               mariadb -u root classicmangos < ${cmangos-src}/sql/base/mangos.sql
               mariadb -u root classicmangos < ${cmangos-src}/sql/base/logs.sql
 
-              echo "Preparing scratch workspace for InstallFullDB.sh in /tmp..."
+              echo "Extracting classic-db in scratch workspace..."
               WORK_DIR=$(mktemp -d)
-              cp -r ${classic-db}/* $WORK_DIR/
-              chmod -R +w $WORK_DIR
+              cp -r ${classic-db}/Full_DB/ClassicDB_*.sql.gz $WORK_DIR/classicdb.sql.gz
+
               cd $WORK_DIR
 
-              echo "Creating mysql binary symlinks for compatibility..."
-              mkdir -p bin
-              ln -s ${pkgs.mariadb}/bin/mariadb ./bin/mysql
-              ln -s ${pkgs.mariadb}/bin/mariadb-dump ./bin/mysqldump
+              gzip -d classicdb.sql.gz
 
-              echo "Fixing line endings and shebang for NixOS..."
-              sed -i 's/\r$//' ./InstallFullDB.sh
-              sed -i 's|#!/bin/bash|#!/usr/bin/env bash|' ./InstallFullDB.sh
-
-
-              echo "Generating non-interactive InstallFullDB.config and injecting nixos module options..."
-              cat << EOF > InstallFullDB.config
-MYSQL_HOST="localhost"
-MYSQL_PORT="3306"
-MYSQL_USERNAME="${cfg.dbUser}"
-MYSQL_PASSWORD="${cfg.dbPassword}"
-MYSQL_USERIP="localhost"
-MYSQL_PATH="$WORK_DIR/bin/mysql"
-MYSQL_DUMP_PATH="$WORK_DIR/bin/mysqldump"
-WORLD_DB_NAME="classicmangos"
-REALM_DB_NAME="classicrealmd"
-CHAR_DB_NAME="classiccharacters"
-LOCALES="YES"
-DEV_UPDATES="NO"
-PLAYERBOTS_DB="YES"
-AHBOT="YES"
-CORE_PATH="${cmangos-src}"
-FORCE_WAIT="NO"
-EOF
-
-              echo "Executing InstallFullDB.sh, pipe interactive questions..."
-              export TERM=dumb
-              (echo "4"; echo "DeleteAll"; yes "") | bash ./InstallFullDB.sh
+              echo "Importing world data..."
+              mariadb -u root classicmangos < classicdb.sql
 
               echo "Deleting scratch workspace..."
               cd /
               rm -rf $WORK_DIR
+
+              echo "Applying classic-db content updates..."
+              for update in ${classic-db}/Updates/*.sql; do
+                if [ -f "$update" ]; then
+                  echo "Applying content update: $(basename "$update")"
+                  mariadb -u root classicmangos < "$update"
+                fi
+              done
+
+              echo "Applying cmangos core updates, check if update is already included in classic-db..."
+              echo "Will throw an error for every update not already applied while checking."
+              for core_update in ${cmangos-src}/sql/updates/mangos/*.sql; do
+                if [ -f "$core_update" ]; then
+                  UPDATE_NAME=$(basename "$core_update" .sql)
+
+                   if mariadb -u root classicmangos -e "SELECT 1 FROM db_version WHERE version = '$UPDATE_NAME' OR updates LIKE '%$UPDATE_NAME%'" >/dev/null 2>&1; then
+                    echo "Core update $UPDATE_NAME already applied by Classic-DB. Skipping."
+                  else
+                  echo "Applying missing core update: $UPDATE_NAME"
+                    mariadb -u root classicmangos < "$core_update" || true
+                  fi
+                fi
+              done
 
               echo "CMaNGOS database initialization complete!"
             else
