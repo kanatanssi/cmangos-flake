@@ -1,6 +1,38 @@
-## NixOS Build Workarounds & Sandbox Fixes
+# CMaNGOS Classic WoW Server Configuration
 
-Building **CMaNGOS Classic** within a strict, network-isolated Nix sandbox requires bypassing downstream dependency fetch mechanisms (`FetchContent`) utilized by the upstream build system. The following workarounds are implemented inside the Nix flake derivation to achieve a completely deterministic, offline compile:
+This NixOS module provides a declarative way to host a CMaNGOS Classic (1.12) World of Warcraft server with integrated MariaDB database initialization, PlayerBots, and AHBot support.
+
+## Usage
+
+Add the flake to your system configuration and enable the service. You must manually extract the client assets (`maps`, `vmaps`, `mmaps`, `dbc`) from your WoW Classic client and place them into the `cmangosDataDir` (defaults to `/var/lib/cmangos`) before the world server can start.
+
+```nix
+{ inputs, ... }: {
+  imports = [ inputs.cmangos-flake.nixosModules.default ];
+
+  services.cmangos-server = {
+    enable = true;
+    openFirewall = true; # Opens port 3724 (auth) and 8085 (world)
+    cmangosDataDir = "/var/lib/cmangos";
+
+    # Optional credentials (defaults to "mangos" / "mangos")
+    dbUser = "mangos";
+    dbPassword = "your_secure_password";
+  };
+}
+```
+
+### Build workarounds and hacks
+* **Boost**: Swapped `Boost_USE_STATIC_LIBS` to `OFF` via `substituteInPlace` because NixOS provides Boost as dynamic shared libraries (`.so`).
+* **Offline builds**: Set `FETCHCONTENT_FULLY_DISCONNECTED=ON` in `cmakeFlags` to prevent CMake from trying to clone repositories over the network.
+* **Zlib bypass**: Hack CMaNGOS's internal `FetchContent` check for Zlib to always return `FALSE`, forcing CMake to use the pre-compiled, stable Nixpkgs native library paths instead.
+* **PlayerBots**: Copied the `playerbots` module directly into `src/modules/PlayerBots`, as cmake tries downloading it otherwise.
+* **MariaDB**: Pointed `MYSQL_INCLUDE_DIR` and `MYSQL_LIBRARY` manually to the Nix system path of `mariadb-connector-c`.
+* **Database password**: Set a password for dbUser via `mysql_native_password`. Default behavior is unix socket auth.
+* **Just straight sql files**: Dropped upstream's interactive `InstallFullDB.sh` manager entirely because it breaks inside non-interactive systemd routines and I could not pass variables to it reliably.
+* **Tmp workspace**: The main `.sql.gz` is extracted under a temporary directory, which is cleaned up after import.
+* **Core update version check**: The classic-db ships with a lot of the updates already included. The check for these prints a lot of errors while checking. Each error means an update that was missing from the db, i.e. an update that should be applied.
+* **Assets from client**: Left client data extraction (`maps`, `vmaps`, `mmaps`, `dbc`) out of the flake. User should ensure that assets are in cmangosDataDir, default `/var/lib/cmangos`.
 
 ### During development, test with
 ```
@@ -16,17 +48,3 @@ shutdown now
 # check init script logs with
 journalctl -u cmangos-db-init --no-pager
 ```
-
-
-### Workarounds and hacks
-- `export TERM=dumb`: `clear` gives a warning in `InstallFullDB.sh` if `TERM` is not set
-
-### 1. Decoupling the Upstream `zlib` Fetch
-By default, `dep/src/CMakeLists.txt` attempts to perform a live Git clone of `madler/zlib` if it determines the host version does not match exact constraints or target configurations.
-* **The Issue:** Nix builds run without internet access, causing the network pull to fail. Attempting to feed a static git repository directly via `FETCHCONTENT_SOURCE_DIR_ZLIB` causes compilation errors because the zlib build scripts attempt to rename files (`zconf.h`) inside the read-only Nix store directory.
-* **The Fix:** We apply a `postPatch` regex replacement (`sed`) to hardcode the condition `if (NOT ZLIB_FOUND...)` to `if (FALSE)`. This safely skips the internal build process and routes CMake directly to its native fallback block, linking cleanly against the pre-compiled `pkgs.zlib` provided by Nixpkgs via `cmakeFlags`.
-
-### 2. Splicing Out-of-Tree Modules (`PlayerBots`)
-The `PlayerBots` framework is traditionally treated as a dynamic module loaded into the source hierarchy via a separate `FetchContent_Populate` phase.
-* **The Issue:** Forcing `FETCHCONTENT_FULLY_DISCONNECTED=ON` prevents the downloader from triggering, but passing an external Nix input path directly into CMake triggers an out-of-tree path warning, and halts because it lacks an explicit build binary mapping directory destination.
-* **The Fix:** We utilize the `preConfigure` hook to create the `src/modules/` directory path and recursively copy the `playerbots` flake input straight into the isolated build workspace (`src/modules/PlayerBots`). Read/Write permissions are recursively granted via `chmod +w`, allowing CMake to seamlessly utilize the codebase as a native, localized directory.

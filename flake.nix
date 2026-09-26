@@ -88,6 +88,12 @@
       options.services.cmangos-server = {
         enable = lib.mkEnableOption "CMaNGOS Classic Server";
 
+        user = lib.mkOption {
+          type = lib.types.str;
+          default = "cmangos";
+          description = "Unprivileged system user to run the CMaNGOS daemons.";
+        };
+
         dbUser = lib.mkOption {
           type = lib.types.str;
           default = "mangos";
@@ -97,9 +103,76 @@
           type = lib.types.str;
           default = "mangos";
         };
+
+        cmangosDataDir = lib.mkOption {
+          type = lib.types.str;
+          default = "/var/lib/cmangos";
+          description = "Location of map data extracted from Wow Classic client.";
+        };
+
+        realmdPort = lib.mkOption {
+          type = lib.types.int;
+          default = 3724;
+          description = "Port for login server.";
+        };
+
+        mangosdPort = lib.mkOption {
+          type = lib.types.int;
+          default = 8085;
+          description = "Port for the world server.";
+        };
+
+        openPorts = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "Open ports in the firewall for realmd and mangosd.";
+        };
+
+        gameAccounts = lib.mkOption {
+          type = lib.types.attrsOf (lib.types.submodule {
+            options = {
+              password = lib.mkOption {
+                type = lib.types.str;
+                description = "Password for the account.";
+              };
+              gmLevel = lib.mkOption {
+                type = lib.types.ints.between 0 3;
+                default = 0;
+                description = "0 for player, 1 for mod, 2 for dm, 3 for admin.";
+              };
+            };
+          });
+          default = {};
+          example = {
+            perttupeikko = { password = "password123"; gmLevel = 0; };
+            hilmahaltia = { password = "password456"; gmLevel = 2; };
+          };
+          description = "Map of game accounts to create. Account name can only be 16 characters and contain alphanumerics Aa-Zz 0-9.";
+        };
       };
 
       config = lib.mkIf cfg.enable {
+
+        assertions = lib.mapAttrsToList (name: value: {
+          assertion = (builtins.match "[a-zA-Z0-9_]+" name) != null;
+          message = "CMaNGOS account username '${name}' contains invalid characters! Only alphanumeric characters and underscores are allowed.";
+        }) cfg.gameAccounts ++ lib.mapAttrsToList (name: value: {
+          assertion = lib.stringLength name <= 16;
+          message = "CMaNGOS account username '${name}' is too long! Maximum length is 16 characters.";
+        }) cfg.gameAccounts;
+
+        users.users.${cfg.user} = {
+          isSystemUser = true;
+          group = cfg.user;
+          description = "CMaNGOS daemon user";
+        };
+        users.groups.${cfg.user} = {};
+
+        networking.firewall = lib.mkIf cfg.openPorts {
+          allowedTCPPorts = [ cfg.realmdPort cfg.mangosdPort ];
+          allowedUDPPorts = [ cfg.realmdPort cfg.mangosdPort ];
+        };
+
         services.mysql = {
           enable = true;
           package = pkgs.mariadb;
@@ -115,6 +188,31 @@
               };
             }
           ];
+        };
+
+        environment.etc = {
+          "cmangos/mangosd.conf".text = ''
+            [Mangosd Conf]
+            ConfVersion = 20250101
+            RealmID = 1
+            DataDir = "${cfg.cmangosDataDir}"
+            WorldServerPort = ${toString cfg.mangosdPort}
+            LoginDatabaseInfo     = "127.0.0.1;3306;${cfg.dbUser};${cfg.dbPassword};classicrealmd"
+            WorldDatabaseInfo     = "127.0.0.1;3306;${cfg.dbUser};${cfg.dbPassword};classicmangos"
+            CharacterDatabaseInfo = "127.0.0.1;3306;${cfg.dbUser};${cfg.dbPassword};classiccharacters"
+            LogsDatabaseInfo      = "127.0.0.1;3306;${cfg.dbUser};${cfg.dbPassword};classiclogs"
+            MaxPlayerLimit = 10
+            Console.Enable = 0
+            PlayerBots.Enable = 1
+            AhBot.Enable = 1
+          '';
+
+          "cmangos/realmd.conf".text = ''
+            [Realmd Conf]
+            ConfVersion = 20250101
+            LoginDatabaseInfo = "127.0.0.1;3306;${cfg.dbUser};${cfg.dbPassword};classicrealmd"
+            RealmServerPort = ${toString cfg.realmdPort}
+          '';
         };
 
         systemd.services.cmangos-db-init = {
@@ -135,14 +233,14 @@
             mariadb -u root -e "ALTER USER '${cfg.dbUser}'@'localhost' IDENTIFIED VIA mysql_native_password USING PASSWORD('${cfg.dbPassword}'); FLUSH PRIVILEGES;"
 
 
-            if [ $(mysql -u root -Nse "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='classicrealmd'") -eq 0 ]; then
+            if [ $(mariadb -u root -Nse "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='classicrealmd'") -eq 0 ]; then
               echo "CMaNGOS dbs empty. Initializing base structures..."
 
               echo "Applying core base structures..."
               mariadb -u root classicrealmd < ${cmangos-src}/sql/base/realmd.sql
               mariadb -u root classiccharacters < ${cmangos-src}/sql/base/characters.sql
               mariadb -u root classicmangos < ${cmangos-src}/sql/base/mangos.sql
-              mariadb -u root classicmangos < ${cmangos-src}/sql/base/logs.sql
+              mariadb -u root classiclogs < ${cmangos-src}/sql/base/logs.sql
 
               echo "Extracting classic-db in scratch workspace..."
               WORK_DIR=$(mktemp -d)
@@ -171,14 +269,8 @@
               echo "Will throw an error for every update not already applied while checking."
               for core_update in ${cmangos-src}/sql/updates/mangos/*.sql; do
                 if [ -f "$core_update" ]; then
-                  UPDATE_NAME=$(basename "$core_update" .sql)
-
-                   if mariadb -u root classicmangos -e "SELECT 1 FROM db_version WHERE version = '$UPDATE_NAME' OR updates LIKE '%$UPDATE_NAME%'" >/dev/null 2>&1; then
-                    echo "Core update $UPDATE_NAME already applied by Classic-DB. Skipping."
-                  else
-                  echo "Applying missing core update: $UPDATE_NAME"
-                    mariadb -u root classicmangos < "$core_update" || true
-                  fi
+                  # Ajetaan päivitys. Jos se on jo olemassa, '|| true' estää palvelua kaatumaan ja jatkaa eteenpäin.
+                  mariadb -u root classicmangos < "$core_update" || true
                 fi
               done
 
@@ -186,8 +278,50 @@
             else
               echo "CMaNGOS databases already populated. Skipping initialization."
             fi
+
+
           '';
         };
+
+        # login server, runs as cfg.user
+        systemd.services.cmangos-realmd = {
+          description = "CMaNGOS Classic Logon Daemon";
+          after = [ "network.target" "cmangos-db-init.service" ];
+          requires = [ "cmangos-db-init.service" ];
+          wantedBy = [ "multi-user.target" ];
+
+          serviceConfig = {
+            ExecStart = "${self.packages.${pkgs.system}.default}/bin/realmd -c /etc/cmangos/realmd.conf";
+            WorkingDirectory = "${cfg.cmangosDataDir}";
+            User = cfg.user;
+            Group = cfg.user;
+            Restart = "always";
+            Type = "simple";
+          };
+        };
+
+        # world server, runs as cfg.user
+        systemd.services.cmangos-mangosd = {
+          description = "CMaNGOS Classic World Daemon";
+          after = [ "network.target" "cmangos-db-init.service" ];
+          requires = [ "cmangos-db-init.service" ];
+          wantedBy = [ "multi-user.target" ];
+
+          serviceConfig = {
+            ExecStart = "${self.packages.${pkgs.system}.default}/bin/mangosd -c /etc/cmangos/mangosd.conf";
+            WorkingDirectory = "${cfg.cmangosDataDir}";
+            User = cfg.user;
+            Group = cfg.user;
+            Restart = "always";
+            Type = "simple";
+          };
+        };
+
+        # ensure that the data dir exists for the service user
+        systemd.tmpfiles.rules = [
+          "d ${cfg.cmangosDataDir} 0755 ${cfg.user} ${cfg.user} -"
+        ];
+
       };
     };
 
@@ -196,16 +330,28 @@
       inherit system;
       modules = [
         self.nixosModules.default
+        "${nixpkgs}/nixos/modules/virtualisation/qemu-vm.nix"
         {
-          services.cmangos-server.enable = true;
+          services.cmangos-server = {
+            enable = true;
+            openPorts = true;
+            gameAccounts = {
+              perttupeikko = { password = "password123"; gmLevel = 0; };
+              hilmahaltia = { password = "password456"; gmLevel = 2; };
+            };
+          };
 
           # set vm to autologin to root, this is just for when you run the test vm
           users.users.root.password = "root";
           services.getty.autologinUser = "root";
 
-          # minimal settings to allow vm to boot
-          fileSystems."/" = { device = "/dev/disk/by-label/nixos"; };
-          boot.loader.grub.enable = false;
+          # share /var/lib/cmangos with the vm for testing
+          virtualisation.sharedDirectories = {
+            cmangos-data = {
+              source = "/var/lib/cmangos";
+              target = "/var/lib/cmangos";
+            };
+          };
         }
       ];
     };
