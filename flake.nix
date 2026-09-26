@@ -103,7 +103,7 @@
         services.mysql = {
           enable = true;
           package = pkgs.mariadb;
-          ensureDatabases = [ "classicmangos" "classiccharacters" "classicrealmd" ];
+          ensureDatabases = [ "classicmangos" "classiccharacters" "classicrealmd" "classiclogs" ];
           ensureUsers = [
             {
               name = cfg.dbUser;
@@ -111,6 +111,7 @@
                 "classicmangos.*" = "ALL PRIVILEGES";
                 "classiccharacters.*" = "ALL PRIVILEGES";
                 "classicrealmd.*" = "ALL PRIVILEGES";
+                "classiclogs.*" = "ALL PRIVILEGES";
               };
             }
           ];
@@ -123,7 +124,7 @@
           serviceConfig.Type = "oneshot";
           serviceConfig.RemainAfterExit = true;
 
-          path = with pkgs; [ mariadb gzip coreutils gnugrep procps gnused bash ];
+          path = with pkgs; [ mariadb gzip coreutils gnugrep procps gnused bash ncurses ];
 
           script = ''
             until mariadb-admin ping -u root --silent; do
@@ -149,6 +150,11 @@
               chmod -R +w $WORK_DIR
               cd $WORK_DIR
 
+              echo "Creating mysql binary symlinks for compatibility..."
+              mkdir -p bin
+              ln -s ${pkgs.mariadb}/bin/mariadb ./bin/mysql
+              ln -s ${pkgs.mariadb}/bin/mariadb-dump ./bin/mysqldump
+
               echo "Fixing line endings and shebang for NixOS..."
               sed -i 's/\r$//' ./InstallFullDB.sh
               sed -i 's|#!/bin/bash|#!/usr/bin/env bash|' ./InstallFullDB.sh
@@ -161,6 +167,8 @@ MYSQL_PORT="3306"
 MYSQL_USERNAME="${cfg.dbUser}"
 MYSQL_PASSWORD="${cfg.dbPassword}"
 MYSQL_USERIP="localhost"
+MYSQL_PATH="$WORK_DIR/bin/mysql"
+MYSQL_DUMP_PATH="$WORK_DIR/bin/mysqldump"
 WORLD_DB_NAME="classicmangos"
 REALM_DB_NAME="classicrealmd"
 CHAR_DB_NAME="classiccharacters"
@@ -173,7 +181,8 @@ FORCE_WAIT="NO"
 EOF
 
               echo "Executing InstallFullDB.sh, pipe interactive questions..."
-              (echo "1"; echo "DeleteAll"; yes "") | bash ./InstallFullDB.sh
+              export TERM=dumb
+              (echo "4"; echo "DeleteAll"; yes "") | bash ./InstallFullDB.sh
 
               echo "Deleting scratch workspace..."
               cd /

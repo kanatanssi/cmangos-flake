@@ -2,6 +2,25 @@
 
 Building **CMaNGOS Classic** within a strict, network-isolated Nix sandbox requires bypassing downstream dependency fetch mechanisms (`FetchContent`) utilized by the upstream build system. The following workarounds are implemented inside the Nix flake derivation to achieve a completely deterministic, offline compile:
 
+### During development, test with
+```
+nix build .#nixosConfigurations.testVM.config.system.build.vm
+./result/bin/run-nixos-vm
+
+# run in terminal from project directory
+QEMU_NET_OPTS="hostfwd=tcp::2222-:22" ./result/bin/run-nixos-vm -nographic
+# exit vm with just a normal shutdown
+shutdown now
+
+
+# check init script logs with
+journalctl -u cmangos-db-init --no-pager
+```
+
+
+### Workarounds and hacks
+- `export TERM=dumb`: `clear` gives a warning in `InstallFullDB.sh` if `TERM` is not set
+
 ### 1. Decoupling the Upstream `zlib` Fetch
 By default, `dep/src/CMakeLists.txt` attempts to perform a live Git clone of `madler/zlib` if it determines the host version does not match exact constraints or target configurations.
 * **The Issue:** Nix builds run without internet access, causing the network pull to fail. Attempting to feed a static git repository directly via `FETCHCONTENT_SOURCE_DIR_ZLIB` causes compilation errors because the zlib build scripts attempt to rename files (`zconf.h`) inside the read-only Nix store directory.
