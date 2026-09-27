@@ -10,7 +10,7 @@
     };
 
     classic-db = {
-      url = "github:cmangos/classic-db/2ed629eb754754ca696e84ed665e7738ed9a6535";
+      url = "github:cmangos/classic-db";
       flake = false;
     };
 
@@ -129,6 +129,12 @@
           description = "Open ports in the firewall for realmd and mangosd.";
         };
 
+        options.services.cmangos-server.realmAddress = lib.mkOption {
+          type = lib.types.str;
+          default = "127.0.0.1";
+          description = "Realmd advertises this to clients. Should point to the world server and be reachable by client.";
+        };
+
         gameAccounts = lib.mkOption {
           type = lib.types.attrsOf (lib.types.submodule {
             options = {
@@ -203,9 +209,11 @@
             CharacterDatabaseInfo = "127.0.0.1;3306;${cfg.dbUser};${cfg.dbPassword};classiccharacters"
             LogsDatabaseInfo      = "127.0.0.1;3306;${cfg.dbUser};${cfg.dbPassword};classiclogs"
             MaxPlayerLimit = 10
-            Console.Enable = 1
+            Console.Enable = 0
             PlayerBots.Enable = 1
             AhBot.Enable = 1
+            vmap.enableLOS = 1
+            vmap.enableHeight = 1
           '';
 
           "cmangos/realmd.conf".text = ''
@@ -213,6 +221,29 @@
             ConfVersion = 20250101
             LoginDatabaseInfo = "127.0.0.1;3306;${cfg.dbUser};${cfg.dbPassword};classicrealmd"
             RealmServerPort = ${toString cfg.realmdPort}
+          '';
+
+          "cmangos/InstallFullDB.config".text = ''
+            # Database connection
+            MYSQL_HOST="localhost"
+            MYSQL_PORT="3306"
+            MYSQL_USERNAME="${cfg.dbUser}"
+            MYSQL_PASSWORD="${cfg.dbPassword}"
+            MYSQL_PATH="mysql"
+            MYSQL_DUMP_PATH="mysqldump"
+
+            # Target db
+            WORLD_DB_NAME="classicmangos"
+
+            # Point to mangos-classic repo
+            CORE_PATH="${cmangos-src}"
+
+            # Optional, YES/NO
+            AHBOT="YES"
+            PLAYERBOTS_DB="YES"
+
+            # Skip 10-second warning
+            FORCE_WAIT="NO"
           '';
         };
 
@@ -223,7 +254,7 @@
           serviceConfig.Type = "oneshot";
           serviceConfig.RemainAfterExit = true;
 
-          path = with pkgs; [ mariadb gzip ];
+          path = with pkgs; [ mariadb gzip bash ];
 
           script = ''
             until mariadb-admin ping -u root --silent; do
@@ -243,77 +274,26 @@
               mariadb -u root classicmangos < ${cmangos-src}/sql/base/mangos.sql
               mariadb -u root classiclogs < ${cmangos-src}/sql/base/logs.sql
 
-              echo "Extracting classic-db in scratch workspace..."
+              echo "Create temp workspace..."
               WORK_DIR=$(mktemp -d)
-              cp -r ${classic-db}/Full_DB/ClassicDB_*.sql.gz $WORK_DIR/classicdb.sql.gz
+
+              cp -r ${classic-db}/* $WORK_DIR/
+
+              echo "Drop in configuration file from environment.etc..."
+              cp /etc/cmangos/InstallFullDB.config $WORK_DIR/InstallFullDB.config
+
+              ln -s $(which mariadb) $WORK_DIR/mysql
+              ln -s $(which mariadb-dump) $WORK_DIR/mysqldump
+              export PATH=$WORK_DIR:$PATH
 
               cd $WORK_DIR
 
-              gzip -d classicdb.sql.gz
-
-              echo "Importing world data..."
-              mariadb -u root classicmangos < classicdb.sql
+              echo "Running InstallFullDB.sh"
+              bash ./InstallFullDB.sh -World
 
               echo "Deleting scratch workspace..."
               cd /
               rm -rf $WORK_DIR
-
-              echo "Applying classic-db content updates..."
-              for update in $(ls ${classic-db}/Updates/*.sql | sort -V); do
-                if [ -f "$update" ]; then
-                  UPDATE_FILE=$(basename "$update")
-                  if [[ "$UPDATE_FILE" =~ ^([0-9]+)_ ]]; then
-                    FILE_VER=''${BASH_REMATCH[1]}
-                    if [ "$FILE_VER" -gt 4606 ]; then
-                      echo "Applying updatepack ($UPDATE_FILE)..."
-                      mariadb -u root classicmangos < "$update"
-                    fi
-                  fi
-                fi
-              done
-
-              echo "Checking current database version..."
-              CURRENT_VER_STR=$(mariadb -u root classicmangos -Nse "SELECT COLUMN_NAME FROM information_schema.columns WHERE table_schema='classicmangos' AND table_name='db_version' AND COLUMN_NAME LIKE 'required_z%' LIMIT 1")
-              if [[ "$CURRENT_VER_STR" =~ required_z([0-9]+) ]]; then
-                CURRENT_VER=''${BASH_REMATCH[1]}
-                echo "Current database version is: z$CURRENT_VER"
-              else
-                echo "WARNING: Could not determine db_version. Defaulting to 0."
-                CURRENT_VER=0
-              fi
-
-              echo "Applying core updates..."
-              for core_update in $(ls ${cmangos-src}/sql/updates/mangos/*.sql | sort -V); do
-                if [ -f "$core_update" ]; then
-                  UPDATE_FILE=$(basename "$core_update")
-                  if [[ "$UPDATE_FILE" =~ ^z([0-9]+)_ ]]; then
-                    FILE_VER=''${BASH_REMATCH[1]}
-                    if [ "$FILE_VER" -gt "$CURRENT_VER" ]; then
-                      echo "Applying core update ($UPDATE_FILE)..."
-                      mariadb -u root classicmangos < "$core_update"
-                    fi
-                  fi
-                fi
-              done
-
-              echo "Applying dbc data..."
-              for dbc_file in $(ls ${cmangos-src}/sql/base/dbc/original_data/*.sql | sort -V); do
-                echo "Applying dbc ($(basename "$dbc_file"))..."
-                mariadb -u root classicmangos < "$dbc_file"
-              done
-              for fix_file in $(ls ${cmangos-src}/sql/base/dbc/cmangos_fixes/*.sql | sort -V); do
-                echo "Applying dbc fix ($(basename "$fix_file"))..."
-                mariadb -u root classicmangos < "$fix_file"
-              done
-
-              echo "Applying scriptdev2 data..."
-              for sd2_file in $(ls ${cmangos-src}/sql/scriptdev2/*.sql | sort -V); do
-                echo "Applying scriptdev2 ($(basename "$sd2_file"))..."
-                mariadb -u root classicmangos < "$sd2_file"
-              done
-
-              echo "Applying ACID data..."
-              mariadb -u root classicmangos < ${cmangos-src}/ACID/acid_classic.sql
 
               echo "CMaNGOS database initialization complete!"
             else
@@ -334,6 +314,13 @@
             '') cfg.gameAccounts)}
 
             echo "All declarative game accounts processed."
+
+            echo "Ensuring realmlist matches configured address..."
+            mariadb -u root classicrealmd -e "
+              INSERT INTO realmlist (id, name, address, port)
+              VALUES (1, 'MaNGOS', '${cfg.realmAddress}', ${toString cfg.mangosdPort})
+              ON DUPLICATE KEY UPDATE address='${cfg.realmAddress}', port=${toString cfg.mangosdPort};
+            "
           '';
         };
 
@@ -398,6 +385,11 @@
           # set vm to autologin to root, this is just for when you run the test vm
           users.users.root.password = "root";
           services.getty.autologinUser = "root";
+
+          virtualisation.forwardPorts = [
+            { from = "host"; host.port = 3724; guest.port = 3724; }  # realmd auth
+            { from = "host"; host.port = 8085; guest.port = 8085; }  # mangosd world, matches your conf
+          ];
 
           # share /var/lib/cmangos with the vm for testing
           virtualisation.sharedDirectories = {
