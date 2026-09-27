@@ -245,6 +245,42 @@
             # Skip 10-second warning
             FORCE_WAIT="NO"
           '';
+
+          "cmangos/aiplayerbot.conf".text = ''
+            [AiPlayerbot]
+            ConfVersion = 20250101
+            AiPlayerbot.Enabled = 1
+            AiPlayerbot.RandomBotAutologin = 1
+            AiPlayerbot.MinRandomBots = 10
+            AiPlayerbot.MaxRandomBots = 30
+            AiPlayerbot.RandomBotAccountPrefix = rndbot
+            AiPlayerbot.RandomBotAccountCount = 50
+            AiPlayerbot.DeleteRandomBots = 0
+
+            AiPlayerbot.RandomBotJoinGuild = 1
+            AiPlayerbot.ChatBotsEnabled = 1
+
+            AiPlayerbot.BotCheats.Gathering = 1
+            AiPlayerbot.AutoEquipUpgrade = 1
+          '';
+
+          "cmangos/ahbot.conf".text = ''
+            [AhbotConf]
+            ConfVersion = 20250101
+
+            AuctionHouseBot.Seller.Enabled = 1
+
+            AuctionHouseBot.Buyer.Enabled = 1
+
+            AuctionHouseBot.Chance.Sell = 30
+            AuctionHouseBot.Chance.Buy = 20
+
+            # min_item_level, max_item_level, max_auctions
+            AuctionHouseBot.Loot.Commons = 1,60,1000
+            AuctionHouseBot.Loot.Uncommons = 1,60,200
+            AuctionHouseBot.Loot.Rares = 1,60,50
+            AuctionHouseBot.Loot.Epics = 1,60,5
+          '';
         };
 
         systemd.services.cmangos-db-init = {
