@@ -64,6 +64,7 @@
         '';
 
         cmakeFlags = [
+          "-DPCH=1"
           "-DDEBUG=0"
           "-DBUILD_PLAYERBOTS=ON"
           "-DBUILD_AHBOT=ON"
@@ -258,19 +259,51 @@
               rm -rf $WORK_DIR
 
               echo "Applying classic-db content updates..."
-              for update in ${classic-db}/Updates/*.sql; do
-                if [ -f "$update" ]; then
-                  echo "Applying content update: $(basename "$update")"
-                  mariadb -u root classicmangos < "$update"
-                fi
+
+              for update in $(ls ${classic-db}/Updates/*.sql | sort -V); do
+                echo "Applying content update: $(basename "$update")"
+                mariadb -u root classicmangos < "$update"
               done
 
-              echo "Applying cmangos core updates, check if update is already included in classic-db..."
-              echo "Will throw an error for every update not already applied while checking."
-              for core_update in ${cmangos-src}/sql/updates/mangos/*.sql; do
+              echo "Applying ACID fixes for spells and creature AI..."
+              ACID_SQL=$(find ${classic-db} -name "acid_classic*.sql" | head -n 1)
+              if [ -n "$ACID_SQL" ]; then
+                echo "Found ACID patch: $(basename "$ACID_SQL")"
+                mariadb -u root classicmangos < "$ACID_SQL"
+              else
+                echo "ACID patch not found, skipping."
+              fi
+
+              if [ "$FIELDS_COUNT" -eq 157 ]; then
+                echo "Laajennetaan spell_template 159 sarakkeen muotoon..."
+                mariadb -u root classicmangos -e "ALTER TABLE spell_template ADD COLUMN AttributesCu int unsigned NOT NULL DEFAULT '0' AFTER AttributesExG;"
+                mariadb -u root classicmangos -e "ALTER TABLE spell_template ADD COLUMN EffectSpellClassMaskCuA int unsigned NOT NULL DEFAULT '0' AFTER EffectSpellClassMaskC3;"
+                echo "spell_template successfully expanded to 159 fields!"
+              fi
+
+              echo "Checking current database version..."
+              CURRENT_VER_STR=$(mariadb -u root classicmangos -Nse "SELECT COLUMN_NAME FROM information_schema.columns WHERE table_schema='classicmangos' AND table_name='db_version' AND COLUMN_NAME LIKE 'required_z%' LIMIT 1")
+                            if [[ "$CURRENT_VER_STR" =~ required_z([0-9]+) ]]; then
+                CURRENT_VER=''${BASH_REMATCH[1]}
+                echo "Current database version is: z$CURRENT_VER"
+              else
+                echo "WARNING: Could not determine db_version. Defaulting to 0."
+                CURRENT_VER=0
+              fi
+
+              echo "Applying core updates..."
+              for core_update in $(ls ${cmangos-src}/sql/updates/mangos/*.sql | sort -V); do
                 if [ -f "$core_update" ]; then
-                  # Ajetaan päivitys. Jos se on jo olemassa, '|| true' estää palvelua kaatumaan ja jatkaa eteenpäin.
-                  mariadb -u root classicmangos < "$core_update" || true
+                  UPDATE_FILE=$(basename "$core_update")
+
+                  if [[ "$UPDATE_FILE" =~ ^z([0-9]+)_ ]]; then
+                    FILE_VER=''${BASH_REMATCH[1]}
+
+                    if [ "$FILE_VER" -gt "$CURRENT_VER" ]; then
+                      echo "Applying core update ($UPDATE_FILE)..."
+                      mariadb -u root classicmangos < "$core_update"
+                    fi
+                  fi
                 fi
               done
 
