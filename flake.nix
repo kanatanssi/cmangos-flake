@@ -129,9 +129,9 @@
           description = "Open ports in the firewall for realmd and mangosd.";
         };
 
-        options.services.cmangos-server.realmAddress = lib.mkOption {
+        realmAddress = lib.mkOption {
           type = lib.types.str;
-          default = "127.0.0.1";
+          default = "example.com";
           description = "Realmd advertises this to clients. Should point to the world server and be reachable by client.";
         };
 
@@ -376,6 +376,7 @@
           services.cmangos-server = {
             enable = true;
             openPorts = true;
+            realmAddress = "127.0.0.1";
             gameAccounts = {
               perttupeikko = { password = "password123"; gmLevel = 0; };
               hilmahaltia = { password = "password456"; gmLevel = 2; };
