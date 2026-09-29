@@ -338,6 +338,74 @@
           '';
         };
 
+        # Service only gets created if gameAccounts is not empty
+        systemd.services.cmangos-accounts = lib.mkIf (cfg.gameAccounts != {}) {
+          description = "Create/update CMaNGOS declarative accounts via mangosd console";
+          after = [ "mysql.service" "cmangos-db-init.service" ];
+          before = [ "cmangos-mangosd.service" "cmangos-realmd.service" ];
+          wantedBy = [ "multi-user.target" ];
+
+          serviceConfig = {
+            Type = "oneshot";
+            RemainAfterExit = true;
+            WorkingDirectory = "${cfg.cmangosDataDir}";
+            runtimeDirectory = "cmangos-init";
+          };
+
+          path = with pkgs; [ mariadb pkgs.screen coreutils gnugrep ];
+
+          # Checking for empty game accounts inside the script too
+          script = ''
+            ${if cfg.gameAccounts == {} then "echo 'No game accounts defined. Skipping.'; exit 0;" else ""}
+
+          export SCREENDIR=$(mktemp -d)
+
+          CONF=$(mktemp)
+          cp /etc/cmangos/mangosd.conf "$CONF"
+          echo "Console.Enable = 1" >> "$CONF"
+          echo "WorldServerPort = 9999" >> "$CONF"
+          echo "SOAP.Enable = 0" >> "$CONF"
+
+            echo "Starting temporary mangosd instance in screen to process accounts..."
+            screen -dmS mangos_init "${self.packages.${pkgs.system}.default}/bin/mangosd" -c $CONF
+
+            echo "Waiting for server console to become ready..."
+            sleep 10
+
+            echo "Processing accounts..."
+            ${lib.concatStringsSep "\n" (lib.mapAttrsToList (user: opts: ''
+              USER_UPPER=$(echo "${user}" | tr '[:lower:]' '[:upper:]')
+
+              EXISTS=$(mariadb -u root classicrealmd -Nse "SELECT COUNT(*) FROM account WHERE username='$USER_UPPER';")
+
+              if [ "$EXISTS" -eq 0 ]; then
+                echo "Creating new account: ${user}"
+                screen -S mangos_init -X stuff "account create ${lib.escapeShellArg user} ${lib.escapeShellArg opts.password}\n"
+                sleep 1
+              else
+                echo "Account ${user} exists. Ensuring password matched conf..."
+                screen -S mangos_init -X stuff "account set password ${lib.escapeShellArg user} ${lib.escapeShellArg opts.password} ${lib.escapeShellArg opts.password}\n"
+                sleep 1
+              fi
+            '') cfg.gameAccounts)}
+
+            echo "Stopping temporary server instance..."
+            screen -S mangos_init -X stuff "shutdown\n"
+
+            echo "Waiting for server to save and release database..."
+            sleep 8
+
+            rm "$CONF"
+
+            echo "Setting GM levels..."
+            ${lib.concatStringsSep "\n" (lib.mapAttrsToList (user: opts: ''
+              mariadb -u root classicrealmd -e "UPDATE account SET gmlevel=${toString opts.gmLevel} WHERE username='${lib.strings.toUpper user}';"
+            '') cfg.gameAccounts)}
+
+            echo "All declarative accounts processed!"
+          '';
+        };
+
         # login server, runs as cfg.user
         systemd.services.cmangos-realmd = {
           description = "CMaNGOS Classic Logon Daemon";
