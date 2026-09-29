@@ -19,16 +19,17 @@
     "cmangos-playerbots": {
       "flake": false,
       "locked": {
-        "lastModified": 1790249527,
-        "narHash": "sha256-FIzdn/SuuybzfEAyO7VZJCztYT+3tex1bRj5lQtvBbY=",
+        "lastModified": 1790655127,
+        "narHash": "sha256-9MH+jKzkndixmAt9S6nJO/ULXKtI5LxvDVGBNvnsWSM=",
         "owner": "cmangos",
         "repo": "playerbots",
-        "rev": "27bf3f2df9aeba5eb9f174aded4a994559f4737b",
+        "rev": "0b3e77f5dae92c2eb304288ed0d6c8139c3b7fdc",
         "type": "github"
       },
       "original": {
         "owner": "cmangos",
         "repo": "playerbots",
+        "rev": "0b3e77f5dae92c2eb304288ed0d6c8139c3b7fdc",
         "type": "github"
       }
     },
@@ -67,11 +68,11 @@
     },
     "nixpkgs": {
       "locked": {
-        "lastModified": 1790185690,
-        "narHash": "sha256-xJ+X4hBtOcAFGBOe5nAMyMUeF9foJBmIOu3NjBqBycU=",
+        "lastModified": 1790578696,
+        "narHash": "sha256-ZoxIApko70jCdbH3l20HWXOBaT2HZd87orzd2yJ9dVE=",
         "owner": "NixOS",
         "repo": "nixpkgs",
-        "rev": "4975466d324710c576dc11ad614684e6bd8cad8e",
+        "rev": "7a0f122f5090cf4c2ade2a13a0e229d4e19ba71f",
         "type": "github"
       },
       "original": {

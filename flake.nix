@@ -15,7 +15,7 @@
     };
 
     cmangos-playerbots = {
-      url = "github:cmangos/playerbots";
+      url = "github:cmangos/playerbots/0b3e77f5dae92c2eb304288ed0d6c8139c3b7fdc";
       flake = false;
     };
 
@@ -290,7 +290,7 @@
           serviceConfig.Type = "oneshot";
           serviceConfig.RemainAfterExit = true;
 
-          path = with pkgs; [ mariadb gzip bash ];
+          path = with pkgs; [ mariadb gzip bash python3 ];
 
           script = ''
             until mariadb-admin ping -u root --silent; do
@@ -340,13 +340,29 @@
             ${lib.concatStringsSep "\n" (lib.mapAttrsToList (user: opts: ''
               UPPER_USER=$(echo "${user}" | tr '[:lower:]' '[:upper:]')
 
-              SALT=$(echo $RANDOM | sha1sum | head -c 40 | tr '[:lower:]' '[:upper:]')
-              UPPER_PASS=$(echo "${opts.password}" | tr '[:lower:]' '[:upper:]')
-              I=$(echo "$UPPER_USER:$UPPER_PASS" | sha1sum | head -c 40 | tr '[:lower:]' '[:upper:]')
-              VERIFIER=$(echo "$SALT:$I" | sha1sum | head -c 40 | tr '[:lower:]' '[:upper:]')
-
               echo "Processing account: $UPPER_USER with GM level ${toString opts.gmLevel}..."
-              mariadb -u root classicrealmd -e "INSERT INTO account (username, s, v, gmlevel) VALUES ('$UPPER_USER', '$SALT', '$VERIFIER', ${toString opts.gmLevel}) ON DUPLICATE KEY UPDATE gmlevel=${toString opts.gmLevel};"
+
+              read -r SALT_HEX VERIFIER_HEX <<< "$(python3 - "$UPPER_USER" ${lib.escapeShellArg opts.password} <<'PYEOF'
+            import sys, hashlib, secrets
+
+            username = sys.argv[1]
+            password = sys.argv[2].upper()
+
+            g = 7
+            N = int("894B645E89E1535BBDAD5B8B290650530801B18EBFBF5E8FAB3C82872A3E9BB7", 16)
+
+            salt = secrets.token_bytes(32)
+            h1 = hashlib.sha1(f"{username}:{password}".encode()).digest()
+            h2 = hashlib.sha1(salt + h1).digest()
+            x = int.from_bytes(h2, "little")
+            v = pow(g, x, N)
+            verifier = v.to_bytes(32, "little")
+
+            print(salt.hex().upper(), verifier.hex().upper())
+            PYEOF
+            )"
+
+              mariadb -u root classicrealmd -e "INSERT INTO account (username, s, v, gmlevel) VALUES ('$UPPER_USER', '$SALT_HEX', '$VERIFIER_HEX', ${toString opts.gmLevel}) ON DUPLICATE KEY UPDATE s='$SALT_HEX', v='$VERIFIER_HEX', gmlevel=${toString opts.gmLevel};"
             '') cfg.gameAccounts)}
 
             echo "All declarative game accounts processed."
@@ -425,7 +441,7 @@
 
           virtualisation.forwardPorts = [
             { from = "host"; host.port = 3724; guest.port = 3724; }  # realmd auth
-            { from = "host"; host.port = 8085; guest.port = 8085; }  # mangosd world, matches your conf
+            { from = "host"; host.port = 8085; guest.port = 8085; }  # mangosd world
           ];
 
           # share /var/lib/cmangos with the vm for testing
