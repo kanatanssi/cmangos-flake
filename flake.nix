@@ -335,44 +335,6 @@
             else
               echo "CMaNGOS databases already populated. Skipping initialization."
             fi
-
-            echo "Ensuring declarative game accounts exist with proper access levels..."
-            ${lib.concatStringsSep "\n" (lib.mapAttrsToList (user: opts: ''
-              UPPER_USER=$(echo "${user}" | tr '[:lower:]' '[:upper:]')
-
-              echo "Processing account: $UPPER_USER with GM level ${toString opts.gmLevel}..."
-
-              read -r SALT_HEX VERIFIER_HEX <<< "$(python3 - "$UPPER_USER" ${lib.escapeShellArg opts.password} <<'PYEOF'
-            import sys, hashlib, secrets
-
-            username = sys.argv[1]
-            password = sys.argv[2].upper()
-
-            g = 7
-            N = int("894B645E89E1535BBDAD5B8B290650530801B18EBFBF5E8FAB3C82872A3E9BB7", 16)
-
-            salt = secrets.token_bytes(32)
-            h1 = hashlib.sha1(f"{username}:{password}".encode()).digest()
-            h2 = hashlib.sha1(salt + h1).digest()
-            x = int.from_bytes(h2, "little")
-            v = pow(g, x, N)
-            verifier = v.to_bytes(32, "little")
-
-            print(salt.hex().upper(), verifier.hex().upper())
-            PYEOF
-            )"
-
-              mariadb -u root classicrealmd -e "INSERT INTO account (username, s, v, gmlevel) VALUES ('$UPPER_USER', '$SALT_HEX', '$VERIFIER_HEX', ${toString opts.gmLevel}) ON DUPLICATE KEY UPDATE s='$SALT_HEX', v='$VERIFIER_HEX', gmlevel=${toString opts.gmLevel};"
-            '') cfg.gameAccounts)}
-
-            echo "All declarative game accounts processed."
-
-            echo "Ensuring realmlist matches configured address..."
-            mariadb -u root classicrealmd -e "
-              INSERT INTO realmlist (id, name, address, port)
-              VALUES (1, 'MaNGOS', '${cfg.realmAddress}', ${toString cfg.mangosdPort})
-              ON DUPLICATE KEY UPDATE address='${cfg.realmAddress}', port=${toString cfg.mangosdPort};
-            "
           '';
         };
 
