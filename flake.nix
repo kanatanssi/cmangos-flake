@@ -1,42 +1,25 @@
 {
   description = "A Nix flake for running a CMaNGOS Classic WoW Server";
 
-  inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+inputs = {
+  nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  cmangos-classic = { url = "github:cmangos/mangos-classic"; flake = false; };
+  classic-db = { url = "github:cmangos/classic-db"; flake = false; };
+  cmangos-playerbots = { url = "github:cmangos/playerbots"; flake = false; };
+};
 
-    cmangos-src = {
-      url = "github:cmangos/mangos-classic";
-      flake = false;
-    };
-
-    classic-db = {
-      url = "github:cmangos/classic-db";
-      flake = false;
-    };
-
-    cmangos-playerbots = {
-      url = "github:cmangos/playerbots/0b3e77f5dae92c2eb304288ed0d6c8139c3b7fdc";
-      flake = false;
-    };
-
-    cmangos-zlib = {
-      url = "github:madler/zlib/v1.3.1";
-      flake = false;
-    };
-  };
-
-  # build the cmangos server package
-  outputs = { self, nixpkgs, cmangos-src, classic-db, cmangos-zlib, cmangos-playerbots }:
+  outputs = { self, nixpkgs, cmangos-classic, classic-db, cmangos-playerbots }:
   let
     system = "x86_64-linux";
     pkgs = import nixpkgs { inherit system; };
   in {
+    # build the cmangos server package
     packages.${system} = {
       default = pkgs.stdenv.mkDerivation {
         pname = "cmangos-classic";
-        version = "date=${cmangos-src.lastModifiedDate or "unknown"}-${cmangos-src.shortRev or "dirty"}";
+        version = "date=${cmangos-classic.lastModifiedDate or "unknown"}-${cmangos-classic.shortRev or "dirty"}";
 
-        src = cmangos-src;
+        src = cmangos-classic;
 
         nativeBuildInputs = with pkgs; [ cmake gcc pkg-config ];
         buildInputs = with pkgs; [ boost mariadb-connector-c ];
@@ -86,15 +69,37 @@
     nixosModules.default = { config, pkgs, lib, ... }:
     let
       cfg = config.services.cmangos-server;
+      # this is just an alias, since the pkgs ref is really long otherwise
+      pkg = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
 
       # helper to make mangosd and realmd configs.
-      # mangosdconfig allows overwriting configuration fields with environment variables
-      # env vars start with Mangosd_, points . are replaced with underscores _
+      # mangosd/realmd allow overwriting configuration fields with environment variables
+      # env vars start with Mangosd_ / Realmd_, points . are replaced with underscores _
       # e.g. Rate.Health -> Mangosd_Rate_Health=1.2, DataDir -> Mangosd_DataDir=/tmp
       mkEnv = prefix: attrs: lib.mapAttrs' (k: v:
         lib.nameValuePair (prefix + lib.replaceStrings [ "." ] [ "_" ] k)
           (if lib.isBool v then (if v then "1" else "0") else toString v)
       ) attrs;
+
+      # read the db password from the given file at runtime and export the mangosd db connection strings
+      # this is done to avoid putting the db password inside the nix store
+      # this script is up here because it is used by both the cmangos-accounts and cmangos-mangosd services
+      mangosdDbEnv = pwPath: ''
+        pw=$(< "${pwPath}")
+        export Mangosd_LoginDatabaseInfo="127.0.0.1;3306;${cfg.dbUser};$pw;classicrealmd"
+        export Mangosd_WorldDatabaseInfo="127.0.0.1;3306;${cfg.dbUser};$pw;classicmangos"
+        export Mangosd_CharacterDatabaseInfo="127.0.0.1;3306;${cfg.dbUser};$pw;classiccharacters"
+        export Mangosd_LogsDatabaseInfo="127.0.0.1;3306;${cfg.dbUser};$pw;classiclogs"
+      '';
+
+      # InstallFullDB.sh looks for the playerbots module's sql under CORE_PATH/src/modules/PlayerBots.
+      # The build puts the module there in preConfigure, but the plain mangos-classic source does not
+      # have it, so give the script a source tree with the module in place.
+      coreSrc = pkgs.runCommand "cmangos-core-src" {} ''
+        cp -r --no-preserve=mode ${cmangos-src} $out
+        mkdir -p $out/src/modules
+        cp -r --no-preserve=mode ${cmangos-playerbots} $out/src/modules/PlayerBots
+      '';
     in {
       options.services.cmangos-server = {
         enable = lib.mkEnableOption "CMaNGOS Classic Server";
@@ -145,12 +150,6 @@
           description = "Open ports in the firewall for realmd and mangosd.";
         };
 
-        realmAddress = lib.mkOption {
-          type = lib.types.str;
-          default = "example.com";
-          description = "Realmd advertises this to clients. Should point to the world server and be reachable by client.";
-        };
-
         mangosdSettings = lib.mkOption {
           type = with lib.types; attrsOf (oneOf [ str int float bool ]);
           default = {};
@@ -161,16 +160,16 @@
         realmdSettings = lib.mkOption {
           type = with lib.types; attrsOf (oneOf [ str int float bool ]);
           default = {};
-          example = { RealmsStateUpdateDelay = 20; "WrongPass.MaxCount" = 0 };
+          example = { RealmsStateUpdateDelay = 20; "WrongPass.MaxCount" = 0; };
           description = "Any realmd.conf key; passed as Realmd_* env vars. Check realmd.conf.dist from repo for available keys";
         };
 
         gameAccounts = lib.mkOption {
           type = lib.types.attrsOf (lib.types.submodule {
             options = {
-              password = lib.mkOption {
+              passwordFile = lib.mkOption {
                 type = lib.types.str;
-                description = "Password for the account.";
+                description = "Absolute path to a file containing the account password. Read as root. Password can only be 16 characters and contain alphanumerics Aa-Zz 0-9.";
               };
               gmLevel = lib.mkOption {
                 type = lib.types.ints.between 0 3;
@@ -181,8 +180,8 @@
           });
           default = {};
           example = {
-            perttupeikko = { password = "password123"; gmLevel = 0; };
-            hilmahaltia = { password = "password456"; gmLevel = 2; };
+            perttupeikko = { passwordFile = "/run/secrets/perttupeikko"; gmLevel = 0; };
+            hilmahaltia = { passwordFile = "/run/secrets/hilmahaltia"; gmLevel = 2; };
           };
           description = "Map of game accounts to create. Account name can only be 16 characters and contain alphanumerics Aa-Zz 0-9.";
         };
@@ -221,14 +220,15 @@
           "d ${cfg.cmangosWorkingDir}/etc 0750 ${cfg.user} ${cfg.user} -"
           "L+ ${cfg.cmangosWorkingDir}/etc/aiplayerbot.conf - - - - /etc/cmangos/aiplayerbot.conf"
           "L+ ${cfg.cmangosWorkingDir}/etc/ahbot.conf - - - - /etc/cmangos/ahbot.conf"
-          "L+ ${cfg.cmangosWorkingDir}/etc/mangosd.conf - - - - ${cmangos-src}/src/mangosd/mangosd.conf.dist.in"
-          "L+ ${cfg.cmangosWorkingDir}/etc/realmd.conf - - - - ${cmangos-src}/src/realmd/realmd.conf.dist.in"
+          "L+ ${cfg.cmangosWorkingDir}/etc/mangosd.conf - - - - ${cmangos-classic}/src/mangosd/mangosd.conf.dist.in"
+          "L+ ${cfg.cmangosWorkingDir}/etc/realmd.conf - - - - ${cmangos-classic}/src/realmd/realmd.conf.dist.in"
         ];
 
         # config files start from here.
         # conf for InstallFullDB.sh script
         # then aiplayerbot and auctionhousebot confs
-        # mangosd and realmd configs go with their respective systemd service so as to not put db password in the nix store
+        # mangosd and realmd use stock config,files (see tmpfiles above) tweaked with env vars defined here
+        # the env vars are used so as to not put db password in the nix store
         environment.etc = {
           "cmangos/InstallFullDB.config".text = ''
             # database connection
@@ -243,10 +243,10 @@
             # target db
             WORLD_DB_NAME="classicmangos"
 
-            # point to mangos-classic repo
-            CORE_PATH="${cmangos-src}"
+            # point to mangos-classic repo, with playerbots module under /modules
+            CORE_PATH="${coreSrc}"
 
-            # dptional, YES/NO
+            # optional, YES/NO
             PLAYERBOTS_DB="YES"
             AHBOT="YES"
 
@@ -309,7 +309,9 @@
           ];
         };
 
-        # run the InstallFullDB.sh script with config from above
+        # set up dbs, first apply base structures
+        # then run the InstallFullDB.sh script with config from above
+        # the script applies content from classic-db + playerbots + ahbot
         systemd.services.cmangos-db-init = {
           description = "Initialize CMaNGOS Classic from classic-db repo";
           after = [ "mysql.service" ];
@@ -320,10 +322,7 @@
           # ncurses package here for clear
           path = with pkgs; [ mariadb gzip bash python3 ncurses ];
 
-          script = let
-            botSql = "${cmangos-playerbots}/sql";
-          in ''
-
+          script = ''
             set -euo pipefail
 
             until mariadb-admin ping -u root --silent; do
@@ -341,10 +340,10 @@
               echo "CMaNGOS dbs empty. Initializing base structures..."
 
               echo "Applying core base structures..."
-              mariadb -u root classicrealmd < ${cmangos-src}/sql/base/realmd.sql
-              mariadb -u root classiccharacters < ${cmangos-src}/sql/base/characters.sql
-              mariadb -u root classicmangos < ${cmangos-src}/sql/base/mangos.sql
-              mariadb -u root classiclogs < ${cmangos-src}/sql/base/logs.sql
+              mariadb -u root classicrealmd < ${cmangos-classic}/sql/base/realmd.sql
+              mariadb -u root classiccharacters < ${cmangos-classic}/sql/base/characters.sql
+              mariadb -u root classicmangos < ${cmangos-classic}/sql/base/mangos.sql
+              mariadb -u root classiclogs < ${cmangos-classic}/sql/base/logs.sql
 
               echo "Create temp workspace..."
               WORK_DIR=$(mktemp -d)
@@ -371,38 +370,6 @@
               echo "CMaNGOS databases already populated. Skipping initialization."
             fi
 
-            echo "Apply playerbots db changes..."
-            applyBotSql() {
-              local db="$1" dir="$2"
-
-              if [ ! -d "$dir" ]; then
-                echo "Playerbot SQL directory $dir not found" >&2
-                exit 1
-              fi
-
-              local count
-              count=$(mariadb -u root -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='$db' AND table_name LIKE 'ai\_playerbot%'")
-              [ "$count" -eq 0 ] || return 0
-
-              local files=()
-              while IFS= read -r f; do files+=("$f"); done < <(
-                find "$dir" -name '*.sql' -not -path '*/tbc/*' -not -path '*/wotlk/*' | sort
-              )
-
-              if [ "''${#files[@]}" -eq 0 ]; then
-                echo "No playerbot SQL files found under $dir" >&2
-                exit 1
-              fi
-
-              for f in "''${files[@]}"; do
-                echo "Applying $f to $db"
-                mariadb "$db" < "$f"
-              done
-            }
-
-            applyBotSql classiccharacters ${botSql}/characters
-            applyBotSql classicmangos ${botSql}/world
-
             echo "CMaNGOS database initialization complete!"
           '';
         };
@@ -417,46 +384,51 @@
           serviceConfig = {
             Type = "oneshot";
             RemainAfterExit = true;
-            WorkingDirectory = "${cfg.cmangosDataDir}";
-            runtimeDirectory = "cmangos-init";
+            WorkingDirectory = "${cfg.cmangosWorkingDir}/workingDir";
           };
 
-          path = with pkgs; [ mariadb pkgs.screen coreutils gnugrep ];
+          path = with pkgs; [ mariadb screen coreutils gnugrep ];
 
           # the script spins up a temporary cmangos instance with screen
           # and then loops over the game accounts and run the commands to add players.
           # done this way as usually the server console is interactive
-          # checking for empty game accounts inside the script too
           script = ''
-            ${if cfg.gameAccounts == {} then "echo 'No game accounts defined. Skipping.'; exit 0;" else ""}
+            set -euo pipefail
 
           export SCREENDIR=$(mktemp -d)
 
-          CONF=$(mktemp)
-          cp /etc/cmangos/mangosd.conf "$CONF"
-          echo "Console.Enable = 1" >> "$CONF"
-          echo "WorldServerPort = 9999" >> "$CONF"
-          echo "SOAP.Enable = 0" >> "$CONF"
+            # temp instance: same conf and dbs as the real server, but console on and a private port
+            ${mangosdDbEnv cfg.dbPasswordFile}
+            export Mangosd_DataDir=${lib.escapeShellArg cfg.cmangosDataDir}
+            export Mangosd_Console_Enable=1
+            export Mangosd_WorldServerPort=9999
 
             echo "Starting temporary mangosd instance in screen to process accounts..."
-            screen -dmS mangos_init "${self.packages.${pkgs.system}.default}/bin/mangosd" -c $CONF
+            screen -dmS mangos_init ${pkg}/bin/mangosd -c ${cfg.cmangosWorkingDir}/etc/mangosd.conf
 
             echo "Waiting for server console to become ready..."
             sleep 10
 
             echo "Processing accounts..."
             ${lib.concatStringsSep "\n" (lib.mapAttrsToList (user: opts: ''
+              # ensure passwords are 1-16 characters and contain only alphanumerics
+              accpw=$(< ${lib.escapeShellArg opts.passwordFile})
+              if ! [[ "$accpw" =~ ^[A-Za-z0-9]{1,16}$ ]]; then
+                echo "Password for account ${user} must be 1-16 alphanumeric characters" >&2
+                exit 1
+              fi
+
               USER_UPPER=$(echo "${user}" | tr '[:lower:]' '[:upper:]')
 
               EXISTS=$(mariadb -u root classicrealmd -Nse "SELECT COUNT(*) FROM account WHERE username='$USER_UPPER';")
 
               if [ "$EXISTS" -eq 0 ]; then
                 echo "Creating new account: ${user}"
-                screen -S mangos_init -X stuff "account create ${lib.escapeShellArg user} ${lib.escapeShellArg opts.password}\n"
+                screen -S mangos_init -X stuff "account create ${user} $accpw\n"
                 sleep 1
               else
-                echo "Account ${user} exists. Ensuring password matched conf..."
-                screen -S mangos_init -X stuff "account set password ${lib.escapeShellArg user} ${lib.escapeShellArg opts.password} ${lib.escapeShellArg opts.password}\n"
+                echo "Account ${user} exists. Ensuring password matches conf..."
+                screen -S mangos_init -X stuff "account set password ${user} $accpw $accpw\n"
                 sleep 1
               fi
             '') cfg.gameAccounts)}
@@ -464,10 +436,12 @@
             echo "Stopping temporary server instance..."
             screen -S mangos_init -X stuff "shutdown\n"
 
-            echo "Waiting for server to save and release database..."
-            sleep 8
-
-            rm "$CONF"
+            echo "Waiting for the temporary server to exit..."
+            for _ in $(seq 1 300); do
+              sessions=$(screen -ls || true)
+              [[ "$sessions" == *mangos_init* ]] || break
+              sleep 1
+            done
 
             echo "Setting GM levels..."
             ${lib.concatStringsSep "\n" (lib.mapAttrsToList (user: opts: ''
@@ -484,7 +458,7 @@
           realmdStart = pkgs.writeShellScript "realmd-start" ''
             pw=$(< "$CREDENTIALS_DIRECTORY/dbpass")
             export Realmd_LoginDatabaseInfo="127.0.0.1;3306;${cfg.dbUser};$pw;classicrealmd"
-            exec ${self.packages.${pkgs.stdenv.hostPlatform.system}.default}/bin/realmd -c ${cfg.cmangosWorkingDir}/etc/realmd.conf
+            exec ${pkg}/bin/realmd -c ${cfg.cmangosWorkingDir}/etc/realmd.conf
           '';
         in {
           systemd.services.cmangos-realmd = {
@@ -494,11 +468,11 @@
             wantedBy = [ "multi-user.target" ];
 
             environment = mkEnv "Realmd_" ({
-              ConfVersion = "2024020101";
               RealmServerPort = cfg.realmdPort;
             } // cfg.realmdSettings);
 
             serviceConfig = {
+              # pass the secret file to the service/user under $CREDENTIALS_DIRECTORY/dbpass
               LoadCredential = "dbpass:${cfg.dbPasswordFile}";
               ExecStart = realmdStart;
               WorkingDirectory = "${cfg.cmangosWorkingDir}/workingDir";
@@ -507,18 +481,13 @@
               Restart = "always";
             };
           };
-        }
 
         # world server, runs as cfg.user
         let
           # read the db password from file at service start, other config env overrides below
           mangosdStart = pkgs.writeShellScript "mangosd-start" ''
-            pw=$(< "$CREDENTIALS_DIRECTORY/dbpass")
-            export Mangosd_LoginDatabaseInfo="127.0.0.1;3306;${cfg.dbUser};$pw;classicrealmd"
-            export Mangosd_WorldDatabaseInfo="127.0.0.1;3306;${cfg.dbUser};$pw;classicmangos"
-            export Mangosd_CharacterDatabaseInfo="127.0.0.1;3306;${cfg.dbUser};$pw;classiccharacters"
-            export Mangosd_LogsDatabaseInfo="127.0.0.1;3306;${cfg.dbUser};$pw;classiclogs"
-            exec ${self.packages.${pkgs.stdenv.hostPlatform.system}.default}/bin/mangosd -c ${cfg.cmangosWorkingDir}/etc/mangosd.conf
+            ${mangosdDbEnv "$CREDENTIALS_DIRECTORY/dbpass"}
+            exec ${pkg}/bin/mangosd -c ${cfg.cmangosWorkingDir}/etc/mangosd.conf
           '';
         in {
         systemd.services.cmangos-mangosd = {
@@ -532,17 +501,15 @@
             # e.g. Rate.Health -> Mangosd_Rate_Health=1.2, DataDir -> Mangosd_DataDir=/tmp
             # see the helper script mkEnv at the top of the file
             environment = mkEnv "Mangosd_" ({
-              ConfVersion = 2024020101;
-              RealmID = 1;
               DataDir = cfg.cmangosDataDir;
               WorldServerPort = cfg.mangosdPort;
-              Console.Enable = 0;
-              PlayerBots.Enable = 1;
-              AhBot.Enable = 1;
-              vmap.enableLOS = 1;
-              vmap.enableHeight = 1;
-              Anticheat.Enable = 0;
-              Warden.Enable = 0;
+              "Console.Enable" = 0;
+              "PlayerBots.Enable" = true;
+              "AhBot.Enable" = true;
+              "vmap.enableLOS" = true;
+              "vmap.enableHeight" = true;
+              "Anticheat.Enable" = false;
+              "Warden.Enable" = false;
             } // cfg.mangosdSettings);
 
             serviceConfig = {
@@ -558,7 +525,7 @@
         }
 
       };
-    }
+    };
 
     # vm for testing
     nixosConfigurations.testVM = nixpkgs.lib.nixosSystem {
@@ -571,26 +538,38 @@
             enable = true;
             openPorts = true;
             realmAddress = "127.0.0.1";
+            dbPasswordFile = "/etc/cmangos-test/dbpass";
             gameAccounts = {
-              perttupeikko = { password = "password123"; gmLevel = 0; };
-              hilmahaltia = { password = "password456"; gmLevel = 2; };
+              perttupeikko = { passwordFile = "/etc/cmangos-test/perttupeikko"; gmLevel = 0; };
+              hilmahaltia = { passwordFile = "/etc/cmangos-test/hilmahaltia"; gmLevel = 2; };
             };
           };
+
+          # test only! written like this, passwords end up in the nix store.
+          # in real life use something like sops-nix to manage secrets
+          environment.etc."cmangos-test/dbpass".text = "mangos";
+          environment.etc."cmangos-test/perttupeikko".text = "password123";
+          environment.etc."cmangos-test/hilmahaltia".text = "password456";
 
           # set vm to autologin to root, this is just for when you run the test vm
           users.users.root.password = "root";
           services.getty.autologinUser = "root";
+
+          # the defaults (1 GB ram, 1 GB disk) are too small for the world db + server
+          virtualisation.memorySize = 4096;
+          virtualisation.cores = 4;
+          virtualisation.diskSize = 8192;
 
           virtualisation.forwardPorts = [
             { from = "host"; host.port = 3724; guest.port = 3724; }  # realmd auth
             { from = "host"; host.port = 8085; guest.port = 8085; }  # mangosd world
           ];
 
-          # share /var/lib/cmangos with the vm for testing
+          # share /var/lib/cmangos/data with the vm for testing (for extracted client data)
           virtualisation.sharedDirectories = {
             cmangos-data = {
-              source = "/var/lib/cmangos";
-              target = "/var/lib/cmangos";
+              source = "/var/lib/cmangos/data";
+              target = "/var/lib/cmangos/data";
             };
           };
         }
