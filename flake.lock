@@ -16,24 +16,7 @@
         "type": "github"
       }
     },
-    "cmangos-playerbots": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1790655127,
-        "narHash": "sha256-9MH+jKzkndixmAt9S6nJO/ULXKtI5LxvDVGBNvnsWSM=",
-        "owner": "cmangos",
-        "repo": "playerbots",
-        "rev": "0b3e77f5dae92c2eb304288ed0d6c8139c3b7fdc",
-        "type": "github"
-      },
-      "original": {
-        "owner": "cmangos",
-        "repo": "playerbots",
-        "rev": "0b3e77f5dae92c2eb304288ed0d6c8139c3b7fdc",
-        "type": "github"
-      }
-    },
-    "cmangos-src": {
+    "cmangos-classic": {
       "flake": false,
       "locked": {
         "lastModified": 1788163243,
@@ -49,20 +32,19 @@
         "type": "github"
       }
     },
-    "cmangos-zlib": {
+    "cmangos-playerbots": {
       "flake": false,
       "locked": {
-        "lastModified": 1705948357,
-        "narHash": "sha256-TkPLWSN5QcPlL9D0kc/yhH0/puE9bFND24aj5NVDKYs=",
-        "owner": "madler",
-        "repo": "zlib",
-        "rev": "51b7f2abdade71cd9bb0e7a373ef2610ec6f9daf",
+        "lastModified": 1791375726,
+        "narHash": "sha256-8WbV8TdCY6CfIpluHh4hzzg+oLQ0FKmmpms/V8GaXaQ=",
+        "owner": "cmangos",
+        "repo": "playerbots",
+        "rev": "da4419afc44f97bb950ca2ebccc3f29a902a3fab",
         "type": "github"
       },
       "original": {
-        "owner": "madler",
-        "ref": "v1.3.1",
-        "repo": "zlib",
+        "owner": "cmangos",
+        "repo": "playerbots",
         "type": "github"
       }
     },
@@ -85,9 +67,8 @@
     "root": {
       "inputs": {
         "classic-db": "classic-db",
+        "cmangos-classic": "cmangos-classic",
         "cmangos-playerbots": "cmangos-playerbots",
-        "cmangos-src": "cmangos-src",
-        "cmangos-zlib": "cmangos-zlib",
         "nixpkgs": "nixpkgs"
       }
     }
