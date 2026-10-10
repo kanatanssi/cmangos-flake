@@ -250,12 +250,45 @@ Run test vm with:
 
 ```
 nix build .#nixosConfigurations.testVM.config.system.build.vm
-sudo ./result/bin/run-nixos-vm -nographic
+./result/bin/run-nixos-vm -nographic
 ```
 
 The vm autologins as root. Its disk is the `.qcow2` in the directory you launch from; delete it for a clean database. The host's `/var/lib/cmangos/data` is shared into the VM, so put client data there.
 
 The VM forwards ports 3724 and 8085 from the host, so a client on the host connects to `127.0.0.1`. The test config caps random bots at 50 and turns the anticheat and Warden off.
+
+### Updating the flake inputs
+
+nixpkgs follows a stable NixOS release (`nixos-26.05`) and is bumped by hand when a new release comes out, i.e. every May and November. The old release stops getting updates about a month after the new one.
+
+Within a release, for security fixes:
+
+```
+nix flake update nixpkgs
+```
+
+For a new NixOS release, change the branch in `inputs.nixpkgs.url` in `flake.nix`, e.g. `nixos-26.05` to `nixos-26.11`, then:
+
+```
+nix flake update nixpkgs
+```
+
+To update cmangos itself, update all three together, so the core, playerbots and the DB match. See [Updating](#updating) for what this means for a running server.
+
+```
+nix flake update cmangos-classic cmangos-playerbots classic-db
+```
+
+After any update, check and test before pushing:
+
+```
+nix flake check --no-build
+rm -f nixos.qcow2   # fresh DB, so the install runs from scratch
+nix build .#nixosConfigurations.testVM.config.system.build.vm
+./result/bin/run-nixos-vm -nographic
+```
+
+Then connect with a client and check that the server, the bots and the accounts work.
 
 ## Build notes
 

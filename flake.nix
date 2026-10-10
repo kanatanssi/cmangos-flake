@@ -2,7 +2,7 @@
   description = "A Nix flake for running a CMaNGOS Classic Server";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
     cmangos-classic = { url = "github:cmangos/mangos-classic"; flake = false; };
     classic-db = { url = "github:cmangos/classic-db"; flake = false; };
     cmangos-playerbots = { url = "github:cmangos/playerbots"; flake = false; };
@@ -26,7 +26,9 @@
     packages.${system} = {
       default = pkgs.stdenv.mkDerivation {
         pname = "cmangos-classic";
-        version = "date=${cmangos-classic.lastModifiedDate or "unknown"}-${cmangos-classic.shortRev or "dirty"}";
+        # nixpkgs convention for untagged sources, the exact commit is pinned in flake.lock
+        version = let d = cmangos-classic.lastModifiedDate; in
+          "0-unstable-${builtins.substring 0 4 d}-${builtins.substring 4 2 d}-${builtins.substring 6 2 d}";
 
         src = cmangosSrc;
 
@@ -581,7 +583,7 @@
               PlayerBots_AiPlayerbot_MinRandomBots = "50";
               PlayerBots_AiPlayerbot_MaxRandomBots = "50";
             };
-            # the stock anticheat.conf has both on, Wenilla needs them off
+            # the stock anticheat.conf has both on, turn off for testing different clients
             anticheatSettings = {
               Anticheat_Enable = "0";
               Anticheat_Warden_Enable = "0";
@@ -594,7 +596,7 @@
           environment.etc."cmangos-test/perttupeikko".text = "password123";
           environment.etc."cmangos-test/hilmahaltia".text = "password456";
 
-          system.stateVersion = "26.11";
+          system.stateVersion = "26.05";
 
           # set vm to autologin to root, this is just for when you run the test vm
           users.users.root.password = "root";
