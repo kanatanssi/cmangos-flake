@@ -1,5 +1,5 @@
 {
-  description = "A Nix flake for running a CMaNGOS Classic WoW Server";
+  description = "A Nix flake for running a CMaNGOS Classic Server";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -62,7 +62,7 @@
           "-DMYSQL_LIBRARY=${pkgs.lib.getLib pkgs.mariadb-connector-c}/lib/mariadb/libmariadb.so"
           # tell cmake not attempt to pull deps from online
           "-DFETCHCONTENT_FULLY_DISCONNECTED=ON"
-          # give exact header and library paths for zlibm cmake won't find zlib otherwise
+          # give exact header and library paths for zlib, cmake won't find zlib otherwise
           "-DZLIB_INCLUDE_DIRS=${pkgs.zlib.dev}/include"
           "-DZLIB_LIBRARIES=${pkgs.zlib}/lib/libz.so"
         ];
@@ -129,7 +129,7 @@
         cmangosDataDir = lib.mkOption {
           type = lib.types.str;
           default = "/var/lib/cmangos/data";
-          description = "Location of map data extracted from Wow Classic client. Is set to read only.";
+          description = "Location of map data extracted from game client. Is set to read only.";
         };
 
         cmangosWorkingDir = lib.mkOption {
@@ -146,13 +146,13 @@
         };
 
         realmdPort = lib.mkOption {
-          type = lib.types.int;
+          type = lib.types.port;
           default = 3724;
           description = "Port for login server.";
         };
 
         mangosdPort = lib.mkOption {
-          type = lib.types.int;
+          type = lib.types.port;
           default = 8085;
           description = "Port for the world server.";
         };
@@ -189,6 +189,13 @@
           default = {};
           example = { AHBot_AhBot_MaxItemLevel = "500"; AHBot_AhBot_MaxAuctionCount_equip_white = "500"; };
           description = "Any ahbot.conf key; passed as AHBot_AhBot_* env vars. Check ahbot.conf.dist from repo for available keys";
+        };
+
+        anticheatSettings = lib.mkOption {
+          type = lib.types.attrsOf lib.types.str;
+          default = {};
+          example = { Anticheat_Enable = "0"; Anticheat_Warden_Enable = "0"; };
+          description = "Any anticheat.conf key; passed as Anticheat_* env vars. The stock conf has anticheat and Warden on; some clients need both off. Check anticheat.conf.dist from repo for available keys";
         };
 
         gameAccounts = lib.mkOption {
@@ -244,7 +251,7 @@
           allowedTCPPorts = [ cfg.realmdPort cfg.mangosdPort ];
         };
 
-        # ensure necessary directories exist and cfg.user can accesss before services are run.
+        # ensure necessary directories exist and cfg.user can access before services are run.
         # cmangos looks for confs in fun and interesting ways, so workingdir and conf dir should be parallel!
         systemd.tmpfiles.rules = [
           "d ${cfg.cmangosDataDir} 0550 ${cfg.user} ${cfg.user} -"
@@ -254,6 +261,9 @@
           "L+ ${cfg.cmangosWorkingDir}/etc/realmd.conf - - - - ${cmangos-classic}/src/realmd/realmd.conf.dist.in"
           "L+ ${cfg.cmangosWorkingDir}/etc/aiplayerbot.conf - - - - ${cmangos-playerbots}/playerbot/aiplayerbot.conf.dist.in"
           "L+ ${cfg.cmangosWorkingDir}/etc/ahbot.conf - - - - ${cmangos-playerbots}/ahbot/ahbot.conf.dist.in"
+          "L+ ${cfg.cmangosWorkingDir}/etc/anticheat.conf - - - - ${pkg}/etc/anticheat.conf.dist"
+          # Warden.ModuleDir defaults to warden_modules, relative to the working dir
+          "L+ ${cfg.cmangosWorkingDir}/workingDir/warden_modules - - - - ${pkg}/bin/warden_modules"
         ];
 
         # db service. dbUser is granted all privileges to the cmangos related dbs
@@ -373,6 +383,7 @@
         systemd.services.cmangos-accounts = lib.mkIf (cfg.gameAccounts != {}) {
           description = "Create/update CMaNGOS declarative accounts via mangosd console";
           after = [ "mysql.service" "cmangos-db-init.service" ];
+          requires = [ "cmangos-db-init.service" ];
           before = [ "cmangos-mangosd.service" "cmangos-realmd.service" ];
           wantedBy = [ "multi-user.target" ];
 
@@ -479,34 +490,36 @@
         };
 
         # login server, runs as cfg.user
-          systemd.services.cmangos-realmd =
-            let
-              # the start script here is different from mangosd, as mangosd exports env vars with Mangosd_*, realmd wants Realmd_*
-              realmdStart = pkgs.writeShellScript "realmd-start" ''
-                pw=$(< "$CREDENTIALS_DIRECTORY/dbpass")
-                export Realmd_LoginDatabaseInfo="127.0.0.1;3306;${dbUser};$pw;classicrealmd"
-                exec ${pkg}/bin/realmd -c ${cfg.cmangosWorkingDir}/etc/realmd.conf
-              '';
-            in {
-            description = "CMaNGOS Classic Logon Daemon";
-            after = [ "network.target" "cmangos-db-init.service" ];
-            requires = [ "cmangos-db-init.service" ];
-            wantedBy = [ "multi-user.target" ];
+        systemd.services.cmangos-realmd =
+          let
+            # the start script here is different from mangosd, as mangosd exports env vars with Mangosd_*, realmd wants Realmd_*
+            realmdStart = pkgs.writeShellScript "realmd-start" ''
+              pw=$(< "$CREDENTIALS_DIRECTORY/dbpass")
+              export Realmd_LoginDatabaseInfo="127.0.0.1;3306;${dbUser};$pw;classicrealmd"
+              exec ${pkg}/bin/realmd -c ${cfg.cmangosWorkingDir}/etc/realmd.conf
+            '';
+          in {
+          description = "CMaNGOS Classic Logon Daemon";
+          after = [ "network.target" "cmangos-db-init.service" ];
+          requires = [ "cmangos-db-init.service" ];
+          wantedBy = [ "multi-user.target" ];
 
-            environment = {
-              Realmd_RealmServerPort = toString cfg.realmdPort;
-            } // cfg.realmdSettings;
+          environment = {
+            Realmd_RealmServerPort = toString cfg.realmdPort;
+          } // cfg.realmdSettings;
 
-            serviceConfig = {
-              # pass the secret file to the service/user under $CREDENTIALS_DIRECTORY/dbpass
-              LoadCredential = "dbpass:${cfg.dbPasswordFile}";
-              ExecStart = realmdStart;
-              WorkingDirectory = "${cfg.cmangosWorkingDir}/workingDir";
-              User = cfg.user;
-              Group = cfg.user;
-              Restart = "always";
-            };
+          serviceConfig = {
+            # pass the secret file to the service/user under $CREDENTIALS_DIRECTORY/dbpass
+            LoadCredential = "dbpass:${cfg.dbPasswordFile}";
+            ExecStart = realmdStart;
+            WorkingDirectory = "${cfg.cmangosWorkingDir}/workingDir";
+            User = cfg.user;
+            Group = cfg.user;
+            Restart = "always";
+            # without a delay, a few quick failures (e.g. db not up yet) hit systemd's start limit
+            RestartSec = 5;
           };
+        };
 
         # world server, runs as cfg.user
         systemd.services.cmangos-mangosd =
@@ -519,7 +532,10 @@
           in {
             description = "CMaNGOS Classic World Daemon";
             after = [ "network.target" "cmangos-db-init.service" ];
-            requires = [ "cmangos-db-init.service" ];
+            # requiring the accounts service makes a rerun of it (e.g. gameAccounts changed) stop mangosd first,
+            # so its temporary instance never runs next to this one. That instance marks the realm offline on exit.
+            requires = [ "cmangos-db-init.service" ]
+              ++ lib.optional (cfg.gameAccounts != {}) "cmangos-accounts.service";
             wantedBy = [ "multi-user.target" ];
 
             # env vars from conf
@@ -527,7 +543,7 @@
               Mangosd_DataDir = cfg.cmangosDataDir;
               Mangosd_WorldServerPort = toString cfg.mangosdPort;
               Mangosd_Console_Enable = "0";
-            } // cfg.mangosdSettings // cfg.playerbotSettings // cfg.ahbotSettings;
+            } // cfg.mangosdSettings // cfg.playerbotSettings // cfg.ahbotSettings // cfg.anticheatSettings;
 
             serviceConfig = {
               # pass the secret file to the service/user under $CREDENTIALS_DIRECTORY/dbpass
@@ -538,7 +554,9 @@
               Group = cfg.user;
               Restart = "always";
               RestartSec = 5;
-              # Consider setting TimeoutStopSec to give server more time to save bots on shutdown
+              # mangosd stops cleanly on SIGTERM and systemd waits until it exits, this is only the upper bound
+              # before SIGKILL. The default 90s can be too short to save many bots and players
+              TimeoutStopSec = 300;
             };
           };
       };
@@ -563,6 +581,11 @@
               PlayerBots_AiPlayerbot_MinRandomBots = "50";
               PlayerBots_AiPlayerbot_MaxRandomBots = "50";
             };
+            # the stock anticheat.conf has both on, Wenilla needs them off
+            anticheatSettings = {
+              Anticheat_Enable = "0";
+              Anticheat_Warden_Enable = "0";
+            };
           };
 
           # test only! written like this, passwords end up in the nix store.
@@ -570,6 +593,8 @@
           environment.etc."cmangos-test/dbpass".text = "mangos";
           environment.etc."cmangos-test/perttupeikko".text = "password123";
           environment.etc."cmangos-test/hilmahaltia".text = "password456";
+
+          system.stateVersion = "26.11";
 
           # set vm to autologin to root, this is just for when you run the test vm
           users.users.root.password = "root";
