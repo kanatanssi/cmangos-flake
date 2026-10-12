@@ -36,7 +36,7 @@ The package is built with this flake's own pinned nixpkgs, which is what it's te
 
 ## Client data
 
-Bring your own! Extract `maps`, `vmaps`, `mmaps` and `dbc` from your client into `cmangosDataDir`, defaults to `/var/lib/cmangos/data`. The core accepts client versions 1.12.1, 1.12.2 and 1.12.3 (builds 5875, 6005, 6141).
+Bring your own! Extract `maps`, `vmaps`, `mmaps` and `dbc` from your client into `cmangosDataDir`, defaults to `/var/lib/cmangos/data`. Cmangos-classic accepts the following client versions 1.12.1, 1.12.2 and 1.12.3 (builds 5875, 6005, 6141) (see [classic-db](https://github.com/cmangos/classic-db/blob/ec4f596146be6467ea93c57397858e329e2db852/README.md?plain=1#L3-L4) for the db and for mangosd `EXPECTED_MANGOSD_CLIENT_BUILD` defined in [SharedDefines.h](https://github.com/cmangos/mangos-classic/blob/8ec338a1704e7dcb1c0213eb7ed58f9231ade40f/src/game/Globals/SharedDefines.h#L2005))
 
 The package ships upstream's extractors under `bin/tools`. With `a`, the script extracts everything without asking; the output directory has to exist:
 
@@ -278,6 +278,8 @@ To update cmangos itself, update all three together, so the core, playerbots and
 ```
 nix flake update cmangos-classic cmangos-playerbots classic-db
 ```
+
+Then update the two source links in [Client data](#client-data) to the new revs (`nix flake metadata` lists them) and check that the client builds haven't changed.
 
 After any update, check and test before pushing:
 
