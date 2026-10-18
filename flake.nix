@@ -221,6 +221,34 @@
           };
           description = "Map of game accounts to create. Account name can be 3-16 characters long and contain alphanumerics Aa-Zz 0-9, - and _.";
         };
+
+        idleRestart = {
+          enable = lib.mkEnableOption "daily mangosd restart when no players are connected. Resets the creature guid counter";
+
+          time = lib.mkOption {
+            type = lib.types.strMatching "([01][0-9]|2[0-3]):[0-5][0-9]";
+            default = "04:00";
+            description = "Start of the restart window, HH:MM host time.";
+          };
+
+          window = lib.mkOption {
+            type = lib.types.ints.between 1 23;
+            default = 2;
+            description = "Hours to keep trying. No restart that day if players stay connected.";
+          };
+
+          retryInterval = lib.mkOption {
+            type = lib.types.ints.positive;
+            default = 10;
+            description = "Minutes between checks.";
+          };
+        };
+
+        clearRespawnsOnStart = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "Empty creature_respawn before mangosd starts. Workaround for a guid leak, rares and bosses respawn on every restart.";
+        };
       };
 
       config = lib.mkIf cfg.enable {
@@ -559,8 +587,74 @@
               # mangosd stops cleanly on SIGTERM and systemd waits until it exits, this is only the upper bound
               # before SIGKILL. The default 90s can be too short to save many bots and players
               TimeoutStopSec = 300;
+
+              # workaround for a cmangos bug, remove once fixed upstream.
+              # each saved respawn time leaks ~4 creature guids/s and the rows carry over restarts. 440 rows crashed an empty server every 74 min
+              # root (+) for socket auth. a list, so user configs can add their own
+              ExecStartPre = lib.optional cfg.clearRespawnsOnStart "+${pkgs.writeShellScript "cmangos-clear-respawns" ''
+                ${config.services.mysql.package}/bin/mariadb -e "DELETE FROM classiccharacters.creature_respawn"
+              ''}";
             };
           };
+
+        # creature guids come from a counter per map that only resets on a mangosd restart.
+        # timer starts this at idleRestart.time, it checks every retryInterval until the window ends
+        # test: sudo systemctl start cmangos-idle-restart
+        # journalctl -u cmangos-idle-restart
+        systemd.services.cmangos-idle-restart = lib.mkIf cfg.idleRestart.enable (
+          let
+            # merged env, follows a port override in mangosdSettings
+            worldPort = config.systemd.services.cmangos-mangosd.environment.Mangosd_WorldServerPort;
+          in {
+          description = "Restart mangosd when no players are online";
+          # a deploy mid-window would start a new window
+          restartIfChanged = false;
+          path = [ pkgs.iproute2 pkgs.systemd pkgs.coreutils ];
+          serviceConfig.Type = "oneshot";
+          script = ''
+            set -euo pipefail
+
+            windowStart=$(date +%s)
+            deadline=$(( windowStart + ${toString cfg.idleRestart.window} * 3600 ))
+
+            while true; do
+              if systemctl is-active --quiet cmangos-mangosd; then
+                # already restarted or deployed during the window
+                started=$(systemctl show --timestamp=unix -p ActiveEnterTimestamp --value cmangos-mangosd)
+                if (( ''${started#@} >= windowStart )); then
+                  echo "mangosd already restarted, done"
+                  exit 0
+                fi
+
+                # client connections to the world port. bots don't connect, players at character select do
+                players=$(ss -Htn state established "( sport = :${worldPort} )" | wc -l)
+                if (( players == 0 )); then
+                  echo "no players connected, restarting mangosd"
+                  systemctl restart cmangos-mangosd
+                  exit 0
+                fi
+                echo "$players players connected"
+              else
+                echo "mangosd not running"
+              fi
+
+              if (( $(date +%s) + ${toString cfg.idleRestart.retryInterval} * 60 > deadline )); then
+                echo "window over, no restart today"
+                exit 0
+              fi
+              sleep ${toString cfg.idleRestart.retryInterval}m
+            done
+          '';
+        });
+
+        systemd.timers.cmangos-idle-restart = lib.mkIf cfg.idleRestart.enable {
+          wantedBy = [ "timers.target" ];
+          timerConfig = {
+            OnCalendar = "*-*-* ${cfg.idleRestart.time}:00";
+            # no catch-up runs outside the window
+            Persistent = false;
+          };
+        };
       };
     };
 
