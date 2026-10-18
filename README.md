@@ -24,6 +24,8 @@ Status: early. Tested in the bundled test VM with a client connecting. Not affil
               perttupeikko = { passwordFile = config.sops.secrets.perttu.path; gmLevel = 0; };
               hilmahaltia = { passwordFile = config.sops.secrets.hilma.path; gmLevel = 2; };
             };
+            # by default 04:00 - 06:00, check every 10min for no online players
+            idleRestart.enable = true;
           };
         })
       ];
