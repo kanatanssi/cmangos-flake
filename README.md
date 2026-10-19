@@ -26,6 +26,8 @@ Status: early. Tested in the bundled test VM with a client connecting. Not affil
             };
             # by default 04:00 - 06:00, check every 10min for no online players
             idleRestart.enable = true;
+            # workaround for a guid leak, rares and bosses respawn on every restart
+            clearRespawnsOnStart = true;
           };
         })
       ];
