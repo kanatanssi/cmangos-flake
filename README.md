@@ -2,7 +2,7 @@
 
 NixOS module and package for a CMaNGOS Classic server: MariaDB setup, PlayerBots, AHBot, declarative game accounts. x86_64-linux only.
 
-Status: early. Tested in the bundled test VM with a client connecting. Not affiliated with the CMaNGOS project.
+Status: working! Tested with running a server for a small group for a couple of weeks now. Defaults are sane. Not affiliated with the CMaNGOS project.
 
 ## Usage
 
