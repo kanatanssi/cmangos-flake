@@ -45,10 +45,23 @@
             --replace-fail "set(Boost_USE_STATIC_LIBS ON)" "set(Boost_USE_STATIC_LIBS OFF)"
         '';
 
-        # bypass cmangos internal FetchContent for zlib
-        # forcing 'if(FALSE)' routes cmake straight to the else() block where it uses predefined nix zlib flags
         postPatch = ''
+          # bypass cmangos internal FetchContent for zlib
+          # forcing 'if(FALSE)' routes cmake straight to the else() block where it uses predefined nix zlib flags
           sed -i 's/if (NOT ZLIB_FOUND.*/if (FALSE)/' dep/src/CMakeLists.txt
+
+          # each llm reply has a 200 ms per character hardcoded delay to fake typing
+          # make it AiPlayerbot.LLMTypingMsPerChar with default 0 to make bots talk as soon as reply is ready
+          # --replace-fail breaks the build if these lines are changed in cmangos repo, should be easy to catch
+          pb=src/modules/PlayerBots/playerbot
+          substituteInPlace $pb/PlayerbotAIConfig.h \
+            --replace-fail "llmRpgAIChatChance;" "llmRpgAIChatChance, llmTypingMsPerChar;"
+          substituteInPlace $pb/PlayerbotAIConfig.cpp \
+            --replace-fail 'llmMaxSimultaniousGenerations = config.GetIntDefault("AiPlayerbot.LLMMaxSimultaniousGenerations", 100);' \
+                           'llmMaxSimultaniousGenerations = config.GetIntDefault("AiPlayerbot.LLMMaxSimultaniousGenerations", 100); llmTypingMsPerChar = config.GetIntDefault("AiPlayerbot.LLMTypingMsPerChar", 0);'
+          substituteInPlace $pb/strategy/actions/SayAction.cpp \
+            --replace-fail "LinesToPackets(lines, chatTemplate, false, 200, emoteTemplate, timeDiff)" \
+                           "LinesToPackets(lines, chatTemplate, false, sPlayerbotAIConfig.llmTypingMsPerChar, emoteTemplate, timeDiff)"
         '';
 
         cmakeFlags = [

@@ -175,6 +175,18 @@ systemd.services.cmangos-mangosd.serviceConfig = {
 
 The limit does not make bots cheaper. If mangosd hits `MemoryMax`, it gets killed and restarted with the same bot count, so size the bot count to the machine first. Check actual usage with `systemctl status cmangos-mangosd` or `systemd-cgtop`.
 
+### LLM reply delay
+
+playerbots holds back each sentence of an LLM reply by 200 ms per character to look like typing, minus the time the LLM took (first sentence only). A 100-character sentence waits 20 s. This is hardcoded in cmangos, the flake patches it into a setting, `AiPlayerbot.LLMTypingMsPerChar`. The default is 0: bots send replies as soon as they're generated. To bring the typing delay back:
+
+```nix
+services.cmangos-server.playerbotSettings = {
+  PlayerBots_AiPlayerbot_LLMTypingMsPerChar = "200"; # 200 is the original hardcoded value
+};
+```
+
+It covers chat replies and bot↔NPC lines. Changing it only restarts mangosd, no rebuild.
+
 ## Database
 
 The module enables `services.mysql` with `pkgs.mariadb` and creates the four `classic*` databases and the `mangos` DB user in it. If the host already runs MySQL or MariaDB through `services.mysql`, the cmangos databases end up in that same instance, and the package must be MariaDB.
@@ -308,6 +320,7 @@ Then connect with a client and check that the server, the bots and the accounts 
 - `FETCHCONTENT_FULLY_DISCONNECTED=ON`, cmake otherwise tries to pull zlib and Playerbots, instead...
 - nixpkgs zlib is used and PlayerBots is added as an input and placed in cmangos' `src/modules/PlayerBots`
 - `MYSQL_INCLUDE_DIR` / `MYSQL_LIBRARY` point at `mariadb-connector-c` manually.
+- playerbots' hardcoded LLM typing delay is patched into `AiPlayerbot.LLMTypingMsPerChar`, see [LLM reply delay](#llm-reply-delay). The patch fails the build if upstream changes those lines.
 - The DB user (`mangos`) gets `mysql_native_password` auth because the daemons and `InstallFullDB.sh` log in with a password. NixOS's default for `ensureUsers` is unix socket auth.
 
 ## License
