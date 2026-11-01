@@ -236,7 +236,7 @@
         };
 
         idleRestart = {
-          enable = lib.mkEnableOption "daily mangosd restart when no players are connected. Resets the creature guid counter";
+          enable = lib.mkEnableOption "daily mangosd restart when no players are connected.";
 
           time = lib.mkOption {
             type = lib.types.strMatching "([01][0-9]|2[0-3]):[0-5][0-9]";
@@ -255,12 +255,6 @@
             default = 10;
             description = "Minutes between checks.";
           };
-        };
-
-        clearRespawnsOnStart = lib.mkOption {
-          type = lib.types.bool;
-          default = false;
-          description = "Empty creature_respawn before mangosd starts. Workaround for a guid leak, rares and bosses respawn on every restart.";
         };
       };
 
@@ -600,18 +594,9 @@
               # mangosd stops cleanly on SIGTERM and systemd waits until it exits, this is only the upper bound
               # before SIGKILL. The default 90s can be too short to save many bots and players
               TimeoutStopSec = 300;
-
-              # workaround for a cmangos bug, remove once fixed upstream.
-              # each saved respawn time leaks ~4 creature guids/s and the rows carry over restarts. 440 rows crashed an empty server every 74 min
-              # root (+) for socket auth. a list, so user configs can add their own
-              ExecStartPre = lib.optional cfg.clearRespawnsOnStart "+${pkgs.writeShellScript "cmangos-clear-respawns" ''
-                ${config.services.mysql.package}/bin/mariadb -e "DELETE FROM classiccharacters.creature_respawn"
-              ''}";
             };
           };
 
-        # creature guids come from a counter per map that only resets on a mangosd restart.
-        # timer starts this at idleRestart.time, it checks every retryInterval until the window ends
         # test: sudo systemctl start cmangos-idle-restart
         # journalctl -u cmangos-idle-restart
         systemd.services.cmangos-idle-restart = lib.mkIf cfg.idleRestart.enable (

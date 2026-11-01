@@ -26,8 +26,6 @@ Status: working! Tested with running a server for a small group for a couple of 
             };
             # by default 04:00 - 06:00, check every 10min for no online players
             idleRestart.enable = true;
-            # workaround for a guid leak, rares and bosses respawn on every restart
-            clearRespawnsOnStart = true;
           };
         })
       ];
@@ -70,11 +68,10 @@ Then copy the resulting directories into `cmangosDataDir`. The mmaps step takes 
 | `cmangosDataDir` | `/var/lib/cmangos/data` | Extracted client data. Read-only for the service. |
 | `cmangosWorkingDir` | `/var/lib/cmangos` | Holds `etc/` and `workingDir/`. cmangos finds its confs relative to the working dir, so they must stay parallel. |
 | `user` | `cmangos` | System user running the daemons. |
-| `idleRestart.enable` | `false` | Daily mangosd restart when no players are connected. Resets the creature guid counter, which only resets on a restart. |
+| `idleRestart.enable` | `false` | Daily mangosd restart when no players are connected.|
 | `idleRestart.time` | `"04:00"` | Start of the restart window, `HH:MM` host time. |
 | `idleRestart.window` | `2` | Hours to keep trying. No restart that day if players stay connected. |
 | `idleRestart.retryInterval` | `10` | Minutes between checks. |
-| `clearRespawnsOnStart` | `false` | Empty `creature_respawn` before mangosd starts. Workaround for an upstream guid leak. Rares and bosses respawn on every restart. |
 
 ## Networking
 
